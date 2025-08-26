@@ -1,6 +1,6 @@
 
 # main app name or workdir defined in Dockerfile
-APPLICATION_NAME=fluid-droplet-NAME
+APPLICATION_NAME=fluid-droplet-shipstation
 #service as defined in docker compose
 SERVICE_NAME=web
 SERVICE_TEST_NAME=test
@@ -11,7 +11,7 @@ SERVICE_TEST_NAME=test
 LOCAL_COMPOSE=docker/compose.yml
 
 # Database volume
-DB_NAME_VOLUME=postgres_
+DB_NAME_VOLUME=postgres_shipstation
 
 help:
 	@echo ''

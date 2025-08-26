@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 3s
     volumes:
-      - postgres_db:/var/lib/postgresql/data
+      - postgres_shipstation:/var/lib/postgresql/data
 
   web:
     build:
@@ -40,6 +40,6 @@ services:
     stdin_open: true
 
 volumes:
-  postgres_db:
+  postgres_shipstation:
   gems:
   node_modules:
