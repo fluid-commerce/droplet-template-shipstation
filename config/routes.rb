@@ -10,6 +10,9 @@ Rails.application.routes.draw do
     resource :droplet, only: %i[ create update ]
     resources :settings, only: %i[ index edit update ]
     resources :users
+    resources :callbacks, only: %i[ index show edit update ] do
+      post :sync, on: :collection
+    end
   end
 
   resources :integration_settings, only: %i[create]

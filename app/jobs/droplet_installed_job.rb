@@ -37,9 +37,10 @@ class DropletInstalledJob < WebhookEventJob
     end
 
     register_active_callbacks(company)
+    create_order_created_webhook(company)
   end
 
-private
+  private
 
   def register_active_callbacks(company)
     client = FluidClient.new(company.authentication_token)
@@ -72,6 +73,16 @@ private
 
     if installed_callback_ids.any?
       company.update(installed_callback_ids: installed_callback_ids)
+    end
+  end
+
+  def create_order_created_webhook(company)
+    client = FluidClient.new(company.authentication_token)
+
+    begin
+      client.webhooks.create(resource: "order", event: "created", auth_token: company.authentication_token )
+    rescue FluidClient::Error => e
+      Rails.logger.error "Failed to create order created webhook: #{e.message}"
     end
   end
 end
