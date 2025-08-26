@@ -7,7 +7,7 @@ steps:
         "build",
         "--no-cache",
         "-t",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
         ".",
         "-f",
         "docker/Dockerfile.base",
