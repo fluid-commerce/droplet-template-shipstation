@@ -84,7 +84,7 @@ steps:
     entrypoint: gcloud
 
 substitutions:
-  _APP_NAME: "fluid-droplet-NAME"
+  _APP_NAME: "fluid-droplet-shipstation"
   _APP_REPOSITORY: "fluid-droplets"
 
 images:
