@@ -6,7 +6,7 @@ steps:
     args:
       [
         "-c",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest || exit 0",
+        "docker pull us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest || exit 0",
       ]
     id: Pull Cache
 
