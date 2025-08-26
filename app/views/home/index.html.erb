@@ -1,7 +1,11 @@
 <% content_for :head do %>
   <%= vite_typescript_tag 'home.tsx' %>
 <% end %>
-<header class="p-2 flex justify-end">
-  <%= link_to "Sign in", new_user_session_path %>
-</header>
-<div id="root"></div>
+
+<div id="root"
+     data-company-id="<%= @company_id %>"
+     data-base-url="<%= @integration_settings&.settings&.dig('api_base_url') %>"
+     data-api-key="<%= @integration_settings&.settings&.dig('api_key') %>"
+     data-api-secret="<%= @integration_settings&.settings&.dig('api_secret') %>"
+     data-fluid-api-token="<%= @integration_settings&.settings&.dig('fluid_api_token') %>">
+</div>
