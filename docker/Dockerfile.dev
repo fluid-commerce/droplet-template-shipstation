@@ -28,7 +28,7 @@ RUN gem install bundler:2.6.5 && \
     bundle install
 
 # Yarn install
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock .yarnrc.yml ./
 
 # Add binstubs to PATH
 ENV PATH="/rails/bin:${PATH}"
