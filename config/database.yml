@@ -5,11 +5,11 @@ default: &default
 
 development:
   <<: *default
-  database: droplet_template_development
+  database: droplet_shipstation_development
 
 test:
   <<: *default
-  database: droplet_template_test
+  database: droplet_shipstation_test
 
 production:
   primary:
@@ -26,17 +26,17 @@ production:
 production:
   primary: &primary_production
     <<: *default
-    database: droplet_template_production
+    database: droplet_shipstation_production
     url: <%= ENV['DATABASE_URL'] %>
   cache:
     <<: *primary_production
-    database: droplet_template_production_cache
+    database: droplet_shipstation_production_cache
     migrations_paths: db/cache_migrate
   queue:
     <<: *primary_production
-    database: droplet_template_production_queue
+    database: droplet_shipstation_production_queue
     migrations_paths: db/queue_migrate
   cable:
     <<: *primary_production
-    database: droplet_template_production_cable
+    database: droplet_shipstation_production_cable
     migrations_paths: db/cable_migrate

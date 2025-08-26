@@ -10,4 +10,5 @@ Rails.application.config.to_prepare do
   # EventHandler.register_handler("company_droplet.created", DropletInstalledJob)
   EventHandler.register_handler("droplet.uninstalled", DropletUninstalledJob)
   EventHandler.register_handler("droplet.installed", DropletInstalledJob)
+  EventHandler.register_handler("order.created", OrderCreatedJob)
 end
