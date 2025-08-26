@@ -2,7 +2,7 @@
 resource "google_cloud_run_v2_service" "cloud_run" {
   name     = var.service_name
   location = var.region
-  client   = "cloud-console"
+  client   = "gcloud"
 
   deletion_protection = true
 
@@ -87,7 +87,8 @@ resource "google_cloud_run_v2_service" "cloud_run" {
       template[0].containers[0].image,
       template[0].containers[0].env,
       template[0].containers[0].startup_probe,
-      template[0].revision
+      template[0].revision,
+      client_version
     ]
   }
 }
