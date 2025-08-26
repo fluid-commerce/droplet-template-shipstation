@@ -1,7 +1,7 @@
 module "cloud_run_job_migrations" {
   source = "../../modules/cloud_run_job"
 
-  service_job_name = "fluid-droplet-NAME-migrations"
+  service_job_name = "fluid-droplet-shipstation-migrations"
   region_job       = var.region
 
   cloud_sql_instances_job = var.cloud_sql_instances_cloud_run

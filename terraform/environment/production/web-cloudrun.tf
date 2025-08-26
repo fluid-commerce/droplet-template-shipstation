@@ -2,11 +2,11 @@
 module "cloud_run_server_rails" {
   source = "../../modules/cloud_run"
 
-  service_name = "fluid-droplet-NAME"
+  service_name = "fluid-droplet-shipstation"
   region       = "us-west3"
 
   environment       = "production"
-  project           = "fluid-droplet-NAME"
+  project           = "fluid-droplet-shipstation"
   purpose_cloud_run = "web"
 
   # Service account email
