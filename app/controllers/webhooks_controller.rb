@@ -38,6 +38,9 @@ private
     auth_header = request.headers["AUTH_TOKEN"] || request.headers["X-Auth-Token"] || request.env["HTTP_AUTH_TOKEN"]
     webhook_auth_token = Setting.fluid_webhook.auth_token
 
+    Rails.logger.info("WebhooksController")
+    Rails.logger.info("[WebhooksController] Valid auth token: #{auth_header} == #{webhook_auth_token}")
+
     auth_header.present? && auth_header == webhook_auth_token
   end
 
