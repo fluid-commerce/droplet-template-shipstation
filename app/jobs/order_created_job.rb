@@ -10,6 +10,6 @@ class OrderCreatedJob < WebhookEventJob
     # end
   rescue StandardError => e
     Rails.logger.error("Error creating order: #{e.message}")
-    render json: { success: false, error: 'Internal server error' }, status: :internal_server_error
+    render json: { success: false, error: "Internal server error" }, status: :internal_server_error
   end
 end

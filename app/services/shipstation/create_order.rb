@@ -5,23 +5,23 @@ module Shipstation
     attr_reader :params, :base_url, :api_key, :api_secret, :fluid_api_token, :company_name
 
     def initialize(order_params)
-      @params = order_params['order'].to_unsafe_h.deep_symbolize_keys
-      @company_id = order_params['company_id']
+      @params = order_params["order"].to_unsafe_h.deep_symbolize_keys
+      @company_id = order_params["company_id"]
       @company_name = Company.find(@company_id)&.name
 
       integration_setting = IntegrationSetting.find_by(company_id: @company_id)
-      @base_url = integration_setting.settings['api_base_url']
-      @api_key = integration_setting.settings['api_key']
-      @api_secret = integration_setting.settings['api_secret']
-      @fluid_api_token = integration_setting.settings['fluid_api_token']
+      @base_url = integration_setting.settings["api_base_url"]
+      @api_key = integration_setting.settings["api_key"]
+      @api_secret = integration_setting.settings["api_secret"]
+      @fluid_api_token = integration_setting.settings["fluid_api_token"]
     end
 
     def call
       order_response = create_order_in_shipstation
 
-      shipstation_order_id = order_response['orderId']
+      shipstation_order_id = order_response["orderId"]
 
-      return Result.new(false, nil, 'Failed to create order in ShipStation') unless shipstation_order_id.present?
+      return Result.new(false, nil, "Failed to create order in ShipStation") unless shipstation_order_id.present?
 
       begin
         fluid_service = FluidApi::V2::OrdersService.new(fluid_api_token)
@@ -33,17 +33,17 @@ module Shipstation
       end
     end
 
-    private
+  private
 
     def headers
       {
-        'Authorization' => generate_auth_header,
-        'Content-Type' => 'application/json'
+        "Authorization" => generate_auth_header,
+        "Content-Type" => "application/json",
       }
     end
 
     def generate_auth_header
-      credentials = Base64.encode64("#{api_key}:#{api_secret}").gsub("\n", '')
+      credentials = Base64.encode64("#{api_key}:#{api_secret}").gsub("\n", "")
       "Basic #{credentials}"
     end
 
@@ -52,7 +52,7 @@ module Shipstation
 
       HTTParty.post(url, {
                       headers: headers,
-                      body: shipstation_payload.to_json
+                      body: shipstation_payload.to_json,
                     })
     end
 
@@ -60,7 +60,7 @@ module Shipstation
       {
         orderNumber: params[:id],
         orderDate: params[:created_at],
-        orderStatus: 'awaiting_shipment',
+        orderStatus: "awaiting_shipment",
         customerUsername: params[:email],
         customerEmail: params[:email],
         billTo: bill_to_payload,
@@ -69,12 +69,12 @@ module Shipstation
         amountPaid: params[:amount],
         taxAmount: params[:tax],
         customerNotes: params[:notes],
-        internalNotes: params[:notes]
+        internalNotes: params[:notes],
       }
     end
 
     def bill_to_payload
-      # we don't have billTo in the payload, so we use shipTo
+      # we don"t have billTo in the payload, so we use shipTo
       ship_to_payload
     end
 
@@ -89,14 +89,14 @@ module Shipstation
         postalCode: params.dig(:ship_to, :postal_code),
         country: params.dig(:ship_to, :country_code),
         phone: params[:phone],
-        residential: true
+        residential: true,
       }
     end
 
     def shipstation_items
       params[:items].map do |item|
         {
-          lineItemKey: 'vd08-MSLbtx',
+          lineItemKey: "vd08-MSLbtx",
           sku: item[:sku],
           name: item[:title],
           imageUrl: item.dig(:product, :image_url),
@@ -105,7 +105,7 @@ module Shipstation
           taxAmount: item[:tax],
           productId: item.dig(:product, :id),
           fulfillmentSku: item.dig(:product, :sku),
-          adjustment: false
+          adjustment: false,
         }
       end
     end
