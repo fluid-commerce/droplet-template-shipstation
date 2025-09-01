@@ -61,6 +61,10 @@ aliases:
   logs: app logs -f
   dbc: app exec --interactive --reuse "bin/rails dbconsole"
 
+# Hooks run at specific points during deployment
+hooks:
+  after_deploy:
+    - app exec "bin/rails solid_queue:install"
 
 # Use a persistent storage volume for sqlite database files and local Active Storage files.
 # Recommended to change this to a mounted volume path that is backed up off server.
