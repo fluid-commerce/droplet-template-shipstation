@@ -45,7 +45,7 @@ private
   end
 
   def find_company
-    Company.find_by(fluid_company_id: company_params[:fluid_company_id]) || Company.find_by(fluid_company_id: params[:company_id])
+    Company.find_by(fluid_company_id: params[:company_id]) || Company.find_by(fluid_company_id: company_params[:fluid_company_id])
   end
 
   def company_params
