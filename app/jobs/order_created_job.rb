@@ -1,5 +1,6 @@
 class OrderCreatedJob < WebhookEventJob
   def process_webhook
+    params = get_payload
     create_order_service = Shipstation::CreateOrder.new(params)
     result = create_order_service.call
 
