@@ -8,7 +8,7 @@ module Shipstation
       Rails.logger.info("CreateOrder")
       @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]
-      @company_name = Company.find(@company_id)&.name
+      @company_name = Company.find_by(fluid_company_id: @company_id)&.name
 
       puts "🔥"*50
       puts"[CreateOrder] params: #{order_params}"
