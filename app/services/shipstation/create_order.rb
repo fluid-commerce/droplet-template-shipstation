@@ -28,6 +28,9 @@ module Shipstation
     def call
       order_response = create_order_in_shipstation
 
+      puts "🔥"*50
+      puts "order_response: #{order_response}"
+      puts "🔥"*50
       shipstation_order_id = order_response["orderId"]
 
       return Result.new(false, nil, "Failed to create order in ShipStation") unless shipstation_order_id.present?
