@@ -1,6 +1,6 @@
 class OrderCreatedJob < WebhookEventJob
   def process_webhook
-    create_order_service = ShipHero::CreateOrder.new(params)
+    create_order_service = Shipstation::CreateOrder.new(params)
     result = create_order_service.call
 
     # if result.success?
