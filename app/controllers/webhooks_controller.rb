@@ -41,7 +41,7 @@ private
     Rails.logger.info("WebhooksController")
     Rails.logger.info("[WebhooksController] Valid auth token: #{auth_header} == #{webhook_auth_token}")
 
-    auth_header.present? && auth_header == webhook_auth_token
+    auth_header.present? && auth_header == webhook_auth_token || auth_header == ENV["FLUID_WEBHOOK_AUTH_TOKEN"]
   end
 
   def find_company
