@@ -8,16 +8,17 @@ module Shipstation
       Rails.logger.info("CreateOrder")
       @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]
-      @company_name = Company.find_by(fluid_company_id: @company_id)&.name
+      company = Company.find_by(fluid_company_id: @company_id)
+      @company_name = company&.name
 
       puts "🔥"*50
-      puts"[CreateOrder] params: #{order_params}"
-      puts"[CreateOrder] Order params: #{order_params.inspect}"
-      puts"[CreateOrder] @params: #{@params}"
-      puts"[CreateOrder] @company_id: #{@company_id}"
-      puts"[CreateOrder] @company_name: #{@company_name}"
+      # puts"[CreateOrder] params: #{order_params}"
+      # puts"[CreateOrder] Order params: #{order_params.inspect}"
+      # puts"[CreateOrder] @params: #{@params}"
+      # puts"[CreateOrder] @company_id: #{@company_id}"
+      # puts"[CreateOrder] @company_name: #{@company_name}"
 
-      integration_setting = IntegrationSetting.find_by(company_id: @company_id)
+      integration_setting = IntegrationSetting.find_by(company_id: company.id)
       @base_url = integration_setting.settings["api_base_url"]
       @api_key = integration_setting.settings["api_key"]
       @api_secret = integration_setting.settings["api_secret"]
