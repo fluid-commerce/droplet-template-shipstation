@@ -5,11 +5,12 @@ module Shipstation
     attr_reader :params, :base_url, :api_key, :api_secret, :fluid_api_token, :company_name
 
     def initialize(order_params)
-      @params = order_params["order"].to_unsafe_h.deep_symbolize_keys
+      @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]
-      @company_name = Company.find(@company_id)&.name
+      company = Company.find_by(fluid_company_id: @company_id)
+      @company_name = company&.name
 
-      integration_setting = IntegrationSetting.find_by(company_id: @company_id)
+      integration_setting = IntegrationSetting.find_by(company_id: company.id)
       @base_url = integration_setting.settings["api_base_url"]
       @api_key = integration_setting.settings["api_key"]
       @api_secret = integration_setting.settings["api_secret"]
