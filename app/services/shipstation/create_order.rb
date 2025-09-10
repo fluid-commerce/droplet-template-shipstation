@@ -5,18 +5,10 @@ module Shipstation
     attr_reader :params, :base_url, :api_key, :api_secret, :fluid_api_token, :company_name
 
     def initialize(order_params)
-      Rails.logger.info("CreateOrder")
       @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]
       company = Company.find_by(fluid_company_id: @company_id)
       @company_name = company&.name
-
-      puts "🔥"*50
-      # puts"[CreateOrder] params: #{order_params}"
-      # puts"[CreateOrder] Order params: #{order_params.inspect}"
-      # puts"[CreateOrder] @params: #{@params}"
-      # puts"[CreateOrder] @company_id: #{@company_id}"
-      # puts"[CreateOrder] @company_name: #{@company_name}"
 
       integration_setting = IntegrationSetting.find_by(company_id: company.id)
       @base_url = integration_setting.settings["api_base_url"]
@@ -28,9 +20,6 @@ module Shipstation
     def call
       order_response = create_order_in_shipstation
 
-      puts "🔥"*50
-      puts "order_response: #{order_response}"
-      puts "🔥"*50
       shipstation_order_id = order_response["orderId"]
 
       return Result.new(false, nil, "Failed to create order in ShipStation") unless shipstation_order_id.present?
