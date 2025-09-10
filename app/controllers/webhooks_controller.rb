@@ -38,11 +38,12 @@ private
     auth_header = request.headers["AUTH_TOKEN"] || request.headers["X-Auth-Token"] || request.env["HTTP_AUTH_TOKEN"]
     webhook_auth_token = Setting.fluid_webhook.auth_token
 
-    auth_header.present? && auth_header == webhook_auth_token || auth_header == ENV["FLUID_WEBHOOK_AUTH_TOKEN"]
+    (auth_header.present? && auth_header == webhook_auth_token) || auth_header == ENV["FLUID_WEBHOOK_AUTH_TOKEN"]
   end
 
   def find_company
-    Company.find_by(fluid_company_id: params[:company_id]) || Company.find_by(fluid_company_id: company_params[:fluid_company_id])
+    fluid_company_id = params[:company_id] || company_params[:fluid_company_id]
+    Company.find_by(fluid_company_id: fluid_company_id)
   end
 
   def company_params
