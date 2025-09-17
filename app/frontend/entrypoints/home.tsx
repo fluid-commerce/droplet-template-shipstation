@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { TextInput } from "../components/input/TextInput";
+import ConfigurationForm from "../components/ConfigurationForm";
 
 interface FluidProps {
   companyId: string;
@@ -10,104 +10,78 @@ interface FluidProps {
   fluidApiToken: string;
 }
 
-const Fluid = ({ companyId, baseUrl, apiKey, apiSecret, fluidApiToken }: FluidProps) => {
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const data = {
-      integration_setting: {
-        company_id: companyId,
-        api_base_url: formData.get('apiBaseUrl'),
-        api_key: formData.get('apiKey'),
-        api_secret: formData.get('apiSecret'),
-        fluid_api_token: formData.get('fluidApiToken'),
-      }
-    };
+// Interfaces
+interface TabItem {
+  id: string;
+  label: string;
+  component: React.ComponentType<any>;
+  props?: any;
+}
 
-    // Send form data to your endpoint
-    fetch('/integration_settings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-      },
-      body: JSON.stringify(data),
-    })
-    .then(response => {
-      if (response.ok) {
-        alert('Configuration saved successfully!');
-      } else {
-        alert('Error saving configuration');
-      }
-    })
-    .catch(error => {
-      console.error('Error:', error);
-      alert('Error saving configuration');
-    });
-  };
+interface TabsProps {
+  tabs: TabItem[];
+  defaultTab?: string;
+  className?: string;
+}
+
+interface TabContentProps {
+  tabs: TabItem[];
+  activeTab: string;
+}
+
+const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, className = '' }) => {
+  const [activeTab, setActiveTab] = useState(defaultTab || tabs[0]?.id || '');
 
   return (
-    <div className="w-full max-w-md mx-auto">
-      <form className="space-y-6" onSubmit={handleSubmit}>
-        <div className="space-y-4">
-          <label>
-            <div className="pb-2 text-sm font-medium">
-              API Base URL
-            </div>
-            <TextInput
-              type="text"
-              name="apiBaseUrl"
-              placeholder="https://api.example.com"
-              defaultValue={baseUrl}
-            />
-          </label>
+    <div className={className}>
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === tab.id
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+      <TabContent tabs={tabs} activeTab={activeTab} />
+    </div>
+  );
+};
 
-          <label>
-            <div className="pt-4 pb-2 text-sm font-medium">
-              API Key
-            </div>
-            <TextInput
-              type="text"
-              name="apiKey"
-              placeholder="API key"
-              defaultValue={apiKey}
-            />
-          </label>
+const TabContent: React.FC<TabContentProps> = ({ tabs, activeTab }) => {
+  const activeTabData = tabs.find(tab => tab.id === activeTab);
 
-          <label>
-            <div className="pt-4 pb-2 text-sm font-medium">
-              API Secret
-            </div>
-            <TextInput
-              type="password"
-              name="apiSecret"
-              placeholder="API secret"
-              defaultValue={apiSecret}
-            />
-          </label>
+  if (!activeTabData) return null;
 
-          <label>
-            <div className="pt-4 pb-2 text-sm font-medium">
-              Fluid API Token
-            </div>
-            <TextInput
-              type="password"
-              name="fluidApiToken"
-              placeholder="Fluid API token"
-              defaultValue={fluidApiToken}
-            />
-          </label>
+  const Component = activeTabData.component;
+  return <Component {...activeTabData.props} />;
+};
+
+const Fluid = ({ companyId, baseUrl, apiKey, apiSecret, fluidApiToken }: FluidProps) => {
+  const tabs: TabItem[] = [
+    {
+      id: 'configuration',
+      label: 'Configuration',
+      component: ConfigurationForm,
+      props: { companyId, baseUrl, apiKey, apiSecret, fluidApiToken }
+    }
+  ];
+
+  return (
+    <div className="min-h-screen bg-gray-100 p-6">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <Tabs tabs={tabs} defaultTab="configuration" />
         </div>
-
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-          >
-            Save
-          </button>
-        </div>
-      </form>
+      </div>
     </div>
   );
 };
