@@ -1,18 +1,13 @@
 class WebhooksController < ApplicationController
   skip_before_action :verify_authenticity_token
-  before_action :validate_droplet_authorization, if: :is_installed_event?
-  before_action :authenticate_webhook_token, unless: :is_installed_event?
+  before_action :validate_droplet_authorization, if: :is_installed_event?, only: :create
+  before_action :authenticate_webhook_token, unless: :is_installed_event?, only: :create
 
   def create
     event_type = "#{params[:resource]}.#{params[:event]}"
     version = params[:version]
 
     payload = params.to_unsafe_h.deep_dup
-
-    logger.info("********************************************************")
-    logger.info("Received webhook event in WebhooksController")
-    logger.info("Received webhook event with payload: #{payload}")
-    logger.info("Received webhook event params: #{params}")
 
     if EventHandler.route(event_type, payload, version: version)
       # A 202 Accepted indicates that we have accepted the webhook and queued
@@ -21,6 +16,13 @@ class WebhooksController < ApplicationController
     else
       head :no_content
     end
+  end
+
+  def test
+    logger.info("********************************************************")
+    logger.info("Received webhook event in WebhooksController")
+    logger.info("Received webhook event with payload: #{payload}")
+    logger.info("Received webhook event params: #{params}")
   end
 
 private
