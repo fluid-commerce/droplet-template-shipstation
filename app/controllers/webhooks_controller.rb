@@ -9,6 +9,11 @@ class WebhooksController < ApplicationController
 
     payload = params.to_unsafe_h.deep_dup
 
+    logger.info("********************************************************")
+    logger.info("Received webhook event in WebhooksController")
+    logger.info("Received webhook event with payload: #{payload}")
+    logger.info("Received webhook event params: #{params}")
+
     if EventHandler.route(event_type, payload, version: version)
       # A 202 Accepted indicates that we have accepted the webhook and queued
       # the appropriate background job for processing.
