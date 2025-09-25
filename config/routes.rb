@@ -4,6 +4,7 @@ Rails.application.routes.draw do
   devise_for :users
 
   post "webhook", to: "webhooks#create", as: :webhook
+  post "webhook_shipped", to: "webhooks#shipped", as: :webhook_shipped
 
   namespace :admin do
     get "dashboard/index"
