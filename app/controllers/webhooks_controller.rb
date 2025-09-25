@@ -18,14 +18,14 @@ class WebhooksController < ApplicationController
     end
   end
 
-  def test
-    logger.info("********************************************************")
-    logger.info("Received webhook event in WebhooksController")
-    logger.info("Received webhook event with payload: #{payload}")
-    logger.info("Received webhook event params: #{params}")
+  # analize the posibility of using same create method
+  def shipped
+    resource_url = params[:resource_url]
+    company_id = params[:company_id]
+    OrderShippedJob.perform_later(resource_url, company_id)
   end
 
-private
+  private
 
   def is_installed_event?
     params[:resource] == "droplet" && params[:event] == "installed"
