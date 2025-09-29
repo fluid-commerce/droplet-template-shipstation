@@ -12,9 +12,25 @@ module Shipstation
     begin
       shipment_response = ss_shipments(batch_id)
 
+      if shipment_response.nil?
+        Rails.logger.error("Failed to fetch shipments from ShipStation API for batch_id #{batch_id}")
+        return
+      end
+
       ss_order_id = shipment_response.dig("shipments",0,"orderId")
 
+      if ss_order_id.blank?
+        Rails.logger.info("No order found in ShipStation with batch_id #{batch_id}")
+        return
+      end
+
       fluid_order = fluid_order(ss_order_id)
+
+      if fluid_order.blank?
+        Rails.logger.info("No Fluid order found for ShipStation order ID #{ss_order_id}")
+        return
+      end
+
       fluid_order_id = fluid_order['id']
 
       # update fluid order with ship date
@@ -39,7 +55,6 @@ module Shipstation
 
   def batch_id
     # Extract batchId from the resource_url
-
     uri = URI.parse(payload)
     query_params = Rack::Utils.parse_query(uri.query)
     batch_id = query_params['batchId']
@@ -47,11 +62,18 @@ module Shipstation
 
   # batch_id=23646326
   def ss_shipments(batch_id)
-    HTTParty.get('https://ssapi.shipstation.com/shipments',
-        query: { batchId: batch_id },
-        headers: headers
-      )
+    response = HTTParty.get('https://ssapi.shipstation.com/shipments',
+      query: { batchId: batch_id },
+      headers: headers
+    )
+
+    unless response.success?
+      Rails.logger.error("ShipStation API request failed with status #{response.code}: #{response.message}")
+      return nil
     end
+
+    response
+  end
 
   def fluid_commerce_order_service
     @fluid_commerce_order_service ||= FluidApi::V2::OrdersService.new(fluid_api_token)

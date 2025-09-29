@@ -3,8 +3,9 @@ Rails.application.routes.draw do
 
   devise_for :users
 
-  post "webhook", to: "webhooks#create", as: :webhook
-  post "webhook_shipped", to: "webhooks#shipped", as: :webhook_shipped
+  resources :webhooks, only: %i[create] do
+    post "shipped", on: :collection
+  end
 
   namespace :admin do
     get "dashboard/index"
@@ -17,13 +18,6 @@ Rails.application.routes.draw do
   end
 
   resources :integration_settings, only: %i[create]
-
-  # API routes
-  namespace :api do
-    namespace :v1 do
-      resources :orders, only: %i[create]
-    end
-  end
 
   get "up" => "rails/health#show", as: :rails_health_check
 end

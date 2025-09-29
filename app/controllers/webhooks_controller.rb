@@ -20,8 +20,12 @@ class WebhooksController < ApplicationController
 
   # analize the posibility of using same create method
   def shipped
+    Rails.logger.info("Shipped webhook received: #{params.inspect}")
+
     resource_url = params[:resource_url]
     company_id = params[:company_id]
+    Rails.logger.info("Shipped webhook resource_url: #{resource_url}")
+    Rails.logger.info("Shipped webhook company_id: #{company_id}")
     OrderShippedJob.perform_later(resource_url, company_id)
   end
 
