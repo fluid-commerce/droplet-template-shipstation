@@ -1,7 +1,7 @@
 class WebhooksController < ApplicationController
   skip_before_action :verify_authenticity_token
-  before_action :validate_droplet_authorization, if: :is_installed_event?
-  before_action :authenticate_webhook_token, unless: :is_installed_event?
+  before_action :validate_droplet_authorization, if: :is_installed_event?, only: :create
+  before_action :authenticate_webhook_token, unless: :is_installed_event?, only: :create
 
   def create
     event_type = "#{params[:resource]}.#{params[:event]}"
@@ -18,7 +18,19 @@ class WebhooksController < ApplicationController
     end
   end
 
-private
+  # analize the posibility of using same create method
+  def shipped
+    Rails.logger.info("Shipped webhook received: #{params.inspect}")
+
+    resource_url = params[:resource_url]
+    company_id = params[:company_id]
+    Rails.logger.info("Shipped webhook resource_url: #{resource_url}")
+    Rails.logger.info("Shipped webhook company_id: #{company_id}")
+
+    OrderShippedJob.perform_later(resource_url, company_id)
+  end
+
+  private
 
   def is_installed_event?
     params[:resource] == "droplet" && params[:event] == "installed"
