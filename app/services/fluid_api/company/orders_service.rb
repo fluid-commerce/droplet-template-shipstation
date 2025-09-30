@@ -3,7 +3,7 @@ module FluidApi
     class OrdersService < BaseService
 
       def update_order(id:, shipped_on:)
-        response = HTTParty.patch(
+        response = HTTParty.put(
           "#{FLUID_API_BASE_URL}/company/orders/#{id}.json",
           headers: headers,
           body: update_order_body(shipped_on).to_json
