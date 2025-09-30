@@ -2,8 +2,6 @@
 
 module FluidApi
   class BaseService
-    include ErrorLogger
-
     attr_reader :company_token
 
     FLUID_API_BASE_URL="https://api.fluid.app/api"
@@ -23,7 +21,7 @@ module FluidApi
     def parse_response(response, symbolize_names: false)
       JSON.parse(response.body, symbolize_names:)
     rescue JSON::ParserError => e
-      log_error(e)
+      Rails.logger.error(e)
       raise
     end
   end
