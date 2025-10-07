@@ -21,13 +21,13 @@ module FluidApi
         parse_response(response, symbolize_names: true)
       end
 
-      private
+    private
 
       def update_external_id_body(external_id)
         {
           order: {
-            external_id: external_id.to_s
-          }
+            external_id: external_id.to_s,
+          },
         }
       end
     end

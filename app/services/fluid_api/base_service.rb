@@ -13,8 +13,8 @@ module FluidApi
     def headers
       {
         Authorization: "Bearer #{company_token}",
-        'Content-Type' => 'application/json',
-        'x-fluid-client' => 'shipstation-droplet'
+        "Content-Type" => "application/json",
+        "x-fluid-client" => "shipstation-droplet",
       }
     end
 

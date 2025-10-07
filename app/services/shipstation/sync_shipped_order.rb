@@ -16,7 +16,7 @@ module Shipstation
           return
         end
 
-        fluid_order_id = shipment_response.dig("shipments",0,"orderNumber")
+        fluid_order_id = shipment_response.dig("shipments", 0, "orderNumber")
 
         if fluid_order_id.blank?
           Rails.logger.info("No order found in ShipStation with batch_id #{batch_id}")
@@ -28,11 +28,11 @@ module Shipstation
         fluid_company_order_service.update_order(id: fluid_order_id, shipped_on: shipped_on)
       rescue StandardError => e
         Rails.logger.error("Error syncing shipped order: #{e.message} - SyncShippedOrder")
-        return
+        nil
       end
     end
 
-    private
+  private
 
     def initialize_ss_credentials(company_id)
       company = Company.find(company_id)
@@ -45,19 +45,21 @@ module Shipstation
       @api_secret = integration_setting.settings["api_secret"]
       @fluid_api_token = integration_setting.settings["fluid_api_token"]
 
-      raise "Missing API credentials for company: #{company_id}" if @api_key.blank? || @api_secret.blank? || @fluid_api_token.blank?
+      if @api_key.blank? || @api_secret.blank? || @fluid_api_token.blank?
+        raise "Missing API credentials for company: #{company_id}"
+      end
     end
 
     def batch_id
       # Extract batchId from the resource_url
       uri = URI.parse(payload)
       query_params = Rack::Utils.parse_query(uri.query)
-      query_params['batchId']
+      query_params["batchId"]
     end
 
     # batch_id=23646326
     def ss_shipments(batch_id)
-      response = HTTParty.get('https://ssapi.shipstation.com/shipments',
+      response = HTTParty.get("https://ssapi.shipstation.com/shipments",
         query: { batchId: batch_id },
         headers: headers
       )

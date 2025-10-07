@@ -30,7 +30,7 @@ class WebhooksController < ApplicationController
     OrderShippedJob.perform_later(resource_url, company_id)
   end
 
-  private
+private
 
   def is_installed_event?
     params[:resource] == "droplet" && params[:event] == "installed"

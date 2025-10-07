@@ -34,7 +34,7 @@ module Shipstation
       end
     end
 
-    private
+  private
 
     def create_order_in_shipstation
       url = "#{base_url}/orders/createorder"
