@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Shipstation
-  class CreateOrder
+  class CreateOrder < BaseService
     attr_reader :params, :base_url, :api_key, :api_secret, :fluid_api_token, :company_name
 
     def initialize(order_params)
@@ -26,7 +26,7 @@ module Shipstation
 
       begin
         fluid_service = FluidApi::V2::OrdersService.new(fluid_api_token)
-        fluid_service.update_order(id: params[:id], external_id: shipstation_order_id)
+        fluid_service.update_external_id(id: params[:id], external_id: shipstation_order_id)
 
         Result.new(true, { shipstation_order_id: shipstation_order_id }, nil)
       rescue StandardError => e
@@ -35,18 +35,6 @@ module Shipstation
     end
 
   private
-
-    def headers
-      {
-        "Authorization" => generate_auth_header,
-        "Content-Type" => "application/json",
-      }
-    end
-
-    def generate_auth_header
-      credentials = Base64.encode64("#{api_key}:#{api_secret}").gsub("\n", "")
-      "Basic #{credentials}"
-    end
 
     def create_order_in_shipstation
       url = "#{base_url}/orders/createorder"
