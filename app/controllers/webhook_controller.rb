@@ -1,4 +1,4 @@
-class WebhooksController < ApplicationController
+class WebhookController < ApplicationController
   skip_before_action :verify_authenticity_token
   before_action :validate_droplet_authorization, if: :is_installed_event?, only: :create
   before_action :authenticate_webhook_token, unless: :is_installed_event?, only: :create
