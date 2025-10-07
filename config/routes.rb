@@ -3,7 +3,7 @@ Rails.application.routes.draw do
 
   devise_for :users
 
-  resources :webhooks, only: %i[create] do
+  resources :webhook, only: %i[create] do
     post "shipped", on: :collection
   end
 
