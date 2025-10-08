@@ -47,7 +47,8 @@ module Shipstation
 
     def shipstation_payload
       {
-        orderNumber: params[:id],
+        orderNumber: params[:order_number],
+        orderKey: params[:id],
         orderDate: params[:created_at],
         orderStatus: "awaiting_shipment",
         customerUsername: params[:email],
