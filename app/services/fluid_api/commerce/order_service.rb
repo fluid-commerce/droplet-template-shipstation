@@ -10,7 +10,7 @@ module FluidApi
 
       def order_fulfillment(id:, order_items:, tracking_number:)
         response = HTTParty.post(
-          "#{FLUID_API_BASE_URL}/api/order_fulfillments",
+          "#{FLUID_API_BASE_URL}/order_fulfillments",
           headers: headers,
           body: order_fulfillment_body(id, order_items, tracking_number).to_json
         )
