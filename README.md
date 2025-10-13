@@ -31,6 +31,31 @@ or run the following command to deploy to google cloud
 Add environment variables to google cloud `add-update-env-gcloud.sh` and run the following command to add environment variables to google cloud
 `sh add-update-env-gcloud.sh`
 
+### Sentry Configuration
+
+This project includes Sentry integration for error monitoring and performance tracking. To enable Sentry:
+
+1. **Create a Sentry project:**
+   - Go to [Sentry.io](https://sentry.io) and create a new project
+   - Select "Ruby" as the platform
+   - Copy the DSN from your project settings
+
+2. **Set the environment variable:**
+   - Add `SENTRY_DSN` to your environment variables with the DSN from your Sentry project
+   - For local development, add it to your `.env` file:
+     ```bash
+     SENTRY_DSN=https://your-dsn@sentry.io/project-id
+     ```
+   - For production, add it to your Google Cloud environment variables
+
+3. **Sentry features enabled:**
+   - Automatic error tracking and reporting
+   - Performance monitoring
+   - Request headers and IP data collection (for debugging)
+   - Active Support and HTTP logger breadcrumbs
+
+The Sentry integration will only be active when the `SENTRY_DSN` environment variable is present and configured.
+
 ### Technology Stack
 
 ![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-336791?logo=postgresql&logoColor=white)
