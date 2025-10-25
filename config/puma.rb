@@ -14,23 +14,22 @@ enable_keep_alives(false) if respond_to?(:enable_keep_alives)
 rackup      DefaultRackup if defined?(DefaultRackup)
 environment ENV["RACK_ENV"] || "development"
 
-on_worker_boot do
+on_worker_boot do |worker_index|
   ActiveRecord::Base.establish_connection
 
   # Start the Solid Queue supervisor in the first Puma worker
   # if SOLID_QUEUE_IN_PUMA is set to true
-  if ENV["SOLID_QUEUE_IN_PUMA"]
+  if ENV["SOLID_QUEUE_IN_PUMA"] && worker_index == 0
     Thread.new do
-      Rails.application.executor.wrap do
-        # Only start the supervisor in the first worker
-        if Puma.respond_to?(:cli_config) && Puma.cli_config.options[:worker_index] == 0
-          Rails.logger.info("Starting Solid Queue supervisor in Puma worker 0")
+      begin
+        Rails.application.executor.wrap do
+          Rails.logger.info("Starting Solid Queue supervisor in Puma worker #{worker_index}")
           SolidQueue::Supervisor.start
         end
+      rescue => e
+        Rails.logger.error("Failed to start Solid Queue supervisor: #{e.message}")
+        Rails.logger.error(e.backtrace.join("\n"))
       end
-    rescue => e
-      Rails.logger.error("Failed to start Solid Queue supervisor: #{e.message}")
-      Rails.logger.error(e.backtrace.join("\n"))
     end
   end
 end
