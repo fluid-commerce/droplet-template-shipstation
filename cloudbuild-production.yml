@@ -74,6 +74,7 @@ steps:
         "--image=us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
         "--region=us-west3",
         "--revision-suffix=${COMMIT_SHA}-${_TIMESTAMP}",
+        "--update-env-vars=SOLID_QUEUE_IN_PUMA=true",
       ]
     id: Deploy Production
     entrypoint: gcloud
