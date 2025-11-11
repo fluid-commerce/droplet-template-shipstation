@@ -16,6 +16,7 @@
     <%= vite_stylesheet_tag "application" %>
     <%= vite_typescript_tag "application" %>
     <%= yield :head %>
+    <%= Sentry.get_trace_propagation_meta.html_safe if ENV['SENTRY_DSN'].present? %>
   </head>
 
   <body>
