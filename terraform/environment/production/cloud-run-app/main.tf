@@ -2,12 +2,12 @@
 resource "google_cloud_run_v2_service" "web_server" {
   name     = "fluid-droplet-shipstation"
   location = "europe-west1"
-  client   = "gcloud"
 
   deletion_protection = true
 
   scaling {
     min_instance_count = 1
+    max_instance_count = 3
   }
 
   template {
@@ -17,11 +17,6 @@ resource "google_cloud_run_v2_service" "web_server" {
     }
 
     service_account = var.service_account_email
-
-    scaling {
-      min_instance_count = 1
-      max_instance_count = 3
-    }
 
     vpc_access {
       network_interfaces {
