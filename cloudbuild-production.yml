@@ -41,49 +41,35 @@ steps:
       ]
     id: push latest
 
-#   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-#     args:
-#       [
-#         "run",
-#         "jobs",
-#         "update",
-#         "${_APP_NAME}-migrations",
-#         "--image=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
-#         "--region=europe-west1",
-#         "--execute-now",
-#         "--wait",
-#       ]
-#     id: Migrate
-#     entrypoint: gcloud
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    args:
+      [
+        "run",
+        "jobs",
+        "update",
+        "${_APP_NAME}-migrations",
+        "--image=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "--region=europe-west1",
+        "--execute-now",
+        "--wait",
+      ]
+    id: Migrate
+    entrypoint: gcloud
 
-#   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-#     args:
-#       [
-#         "run",
-#         "services",
-#         "update",
-#         "${_APP_NAME}",
-#         "--platform=managed",
-#         "--image=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
-#         "--region=europe-west1",
-#         "--revision-suffix=${COMMIT_SHA}-${_TIMESTAMP}",
-#       ]
-#     id: Deploy Production
-#     entrypoint: gcloud
-
-#   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-#     args:
-#       [
-#         "compute",
-#         "instances",
-#         "update-container",
-#         "${_APP_NAME}-jobs-console",
-#         "--zone=europe-west1-b",
-#         "--container-image=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
-#         "--quiet",
-#       ]
-#     id: Update Container Jobs Production
-#     entrypoint: gcloud
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    args:
+      [
+        "run",
+        "services",
+        "update",
+        "${_APP_NAME}",
+        "--platform=managed",
+        "--image=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "--region=europe-west1",
+        "--revision-suffix=${COMMIT_SHA}-${_TIMESTAMP}",
+      ]
+    id: Deploy Production
+    entrypoint: gcloud
 
 substitutions:
   _APP_NAME: "fluid-droplet-shipstation"
