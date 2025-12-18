@@ -3,7 +3,7 @@ project_id = "fluid-417204"
 region = "europe-west1"
 
 # service account email
-email_service_account = "106074092699-compute@developer.gserviceaccount.com"
+service_account_email = "106074092699-compute@developer.gserviceaccount.com"
 
 # container image
 container_image = "europe-west1-docker.pkg.dev/fluid-417204/fluid-droplets/fluid-droplet-shipstation-rails/web:latest"

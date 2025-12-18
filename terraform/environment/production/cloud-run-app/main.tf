@@ -40,7 +40,7 @@ resource "google_cloud_run_v2_service" "web_server" {
     }
 
     containers {
-      name  = var.container_name
+      name  = "web-1"
       image = var.container_image
 
       ports {
