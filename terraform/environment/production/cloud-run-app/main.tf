@@ -104,3 +104,12 @@ resource "google_cloud_run_v2_service" "web_server" {
   }
 }
 
+resource "google_cloud_run_service_iam_binding" "web_server_invoker" {
+  location = google_cloud_run_v2_service.web_server.location
+  service  = google_cloud_run_v2_service.web_server.name
+  role     = "roles/run.invoker"
+  members = [
+    "allUsers"
+  ]
+}
+
