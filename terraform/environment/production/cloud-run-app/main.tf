@@ -81,7 +81,7 @@ resource "google_cloud_run_v2_service" "web_server" {
         initial_delay_seconds = 30
         failure_threshold     = 3
 
-        period_seconds  = 30
+        period_seconds  = 240
         timeout_seconds = 240
 
         http_get {
@@ -97,7 +97,6 @@ resource "google_cloud_run_v2_service" "web_server" {
     ignore_changes = [
       template[0].containers[0].image,
       template[0].containers[0].env,
-      template[0].containers[0].startup_probe,
       template[0].revision,
       client_version
     ]
