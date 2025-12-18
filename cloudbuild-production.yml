@@ -1,12 +1,12 @@
 # google cloud build
-# gcloud beta builds submit --config cloudbuild-production.yml --region=us-west3 --substitutions=COMMIT_SHA=$(git rev-parse --short HEAD),_TIMESTAMP=$(date +%Y%m%d%H%M%S) --project=fluid-417204 .
+# gcloud beta builds submit --config cloudbuild-production.yml --region=europe-west1 --substitutions=COMMIT_SHA=$(git rev-parse --short HEAD),_TIMESTAMP=$(date +%Y%m%d%H%M%S) --project=fluid-417204 .
 steps:
   - name: "gcr.io/cloud-builders/docker"
     entrypoint: "bash"
     args:
       [
         "-c",
-        "docker pull us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest || exit 0",
+        "docker pull europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest || exit 0",
       ]
     id: Pull Cache
 
@@ -14,9 +14,11 @@ steps:
     args:
       [
         "build",
-        "--cache-from=us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest",
+        "--cache-from=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest",
         "-t",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "-t",
+        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest",
         ".",
         "-f",
         "docker/Dockerfile",
@@ -26,17 +28,8 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args:
       [
-        "tag",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest",
-      ]
-    id: Tag
-
-  - name: gcr.io/cloud-builders/docker
-    args:
-      [
         "push",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
       ]
     id: push commit sha
 
@@ -44,7 +37,7 @@ steps:
     args:
       [
         "push",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest",
+        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest",
       ]
     id: push latest
 
@@ -55,8 +48,8 @@ steps:
         "jobs",
         "update",
         "${_APP_NAME}-migrations",
-        "--image=us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
-        "--region=us-west3",
+        "--image=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "--region=europe-west1",
         "--execute-now",
         "--wait",
       ]
@@ -71,26 +64,11 @@ steps:
         "update",
         "${_APP_NAME}",
         "--platform=managed",
-        "--image=us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
-        "--region=us-west3",
+        "--image=europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
+        "--region=europe-west1",
         "--revision-suffix=${COMMIT_SHA}-${_TIMESTAMP}",
-        "--update-env-vars=SOLID_QUEUE_IN_PUMA=true",
       ]
     id: Deploy Production
-    entrypoint: gcloud
-
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    args:
-      [
-        "compute",
-        "instances",
-        "update-container",
-        "${_APP_NAME}-jobs-console",
-        "--zone=us-west3-b",
-        "--container-image=us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA",
-        "--quiet",
-      ]
-    id: Update Container Jobs Production
     entrypoint: gcloud
 
 substitutions:
@@ -98,8 +76,8 @@ substitutions:
   _APP_REPOSITORY: "fluid-droplets"
 
 images:
-  - "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA"
-  - "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest"
+  - "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:$COMMIT_SHA"
+  - "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:latest"
 
 options:
   substitutionOption: ALLOW_LOOSE

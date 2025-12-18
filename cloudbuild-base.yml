@@ -1,5 +1,5 @@
 # google cloud build
-# gcloud beta builds submit --config cloudbuild-base.yml --region=us-west3 --substitutions=COMMIT_SHA=$(git rev-parse --short HEAD) --project=fluid-417204 .
+# gcloud beta builds submit --config cloudbuild-base.yml --region=europe-west1 --substitutions=COMMIT_SHA=$(git rev-parse --short HEAD) --project=fluid-417204 .
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
@@ -7,7 +7,7 @@ steps:
         "build",
         "--no-cache",
         "-t",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
+        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
         ".",
         "-f",
         "docker/Dockerfile.base",
@@ -17,16 +17,8 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args:
       [
-        "tag",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
-      ]
-    id: Tag
-
-  - name: gcr.io/cloud-builders/docker
-    args:
-      [
         "push",
-        "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
+        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
       ]
     id: push base
 
@@ -35,7 +27,7 @@ substitutions:
   _APP_REPOSITORY: "fluid-droplets"
 
 images:
-  - "us-west3-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base"
+  - "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base"
 
 options:
   substitutionOption: ALLOW_LOOSE
