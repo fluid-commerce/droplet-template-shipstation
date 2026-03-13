@@ -10,7 +10,7 @@ describe SyncTrackingJob do
     it "finds orders that need syncing and marks them synced" do
       mock_setting = OpenStruct.new(settings: { "fluid_api_token" => "test-token" })
 
-      fluid_body = { order: { id: 100, items: [{ id: 1, quantity: 2 }] } }.to_json
+      fluid_body = { order: { id: 100, items: [ { id: 1, quantity: 2 } ] } }.to_json
       fulfillment_body = { order_fulfillment: { id: 1 } }.to_json
 
       mock_fluid_response = OpenStruct.new(body: fluid_body)

@@ -38,7 +38,7 @@ class CreateShipstationOrders < ActiveRecord::Migration[8.0]
     add_index :shipstation_orders, :fluid_order_number
     add_index :shipstation_orders, :shipstation_order_id
     add_index :shipstation_orders, :status
-    add_index :shipstation_orders, [:status, :tracking_synced_to_fluid],
+    add_index :shipstation_orders, %i[ status tracking_synced_to_fluid ],
               name: "index_ss_orders_on_status_and_sync"
   end
 end

@@ -25,7 +25,11 @@ module Shipstation
 
       if local_order
         existing_tracking = local_order.tracking_numbers || []
-        updated_tracking = existing_tracking.include?(tracking_number) ? existing_tracking : existing_tracking + [tracking_number]
+        updated_tracking = if existing_tracking.include?(tracking_number)
+          existing_tracking
+        else
+          existing_tracking + [ tracking_number ]
+        end
 
         local_order.update!(
           status: "SHIPPED",
