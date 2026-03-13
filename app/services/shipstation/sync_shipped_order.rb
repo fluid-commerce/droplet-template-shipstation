@@ -75,10 +75,22 @@ module Shipstation
       shipment_response
     end
 
+    ALLOWED_SHIPSTATION_HOSTS = %w[
+      ssapi.shipstation.com
+      ssapi6.shipstation.com
+    ].freeze
+
     def batch_id
       uri = URI.parse(payload)
+      validate_resource_url!(uri)
       query_params = Rack::Utils.parse_query(uri.query)
       query_params["batchId"]
+    end
+
+    def validate_resource_url!(uri)
+      unless uri.scheme == "https" && ALLOWED_SHIPSTATION_HOSTS.include?(uri.host)
+        raise "Invalid resource_url host: #{uri.host}. Must be an official ShipStation API endpoint."
+      end
     end
 
     def ss_shipments(batch_id)

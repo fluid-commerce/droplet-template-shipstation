@@ -31,7 +31,7 @@ module Fluid
             "resource" => attributes[:resource] || "droplet",
             "url" => attributes[:url] || webhook_url,
             "active" => attributes[:active] || true,
-            "auth_token" => attributes[:auth_token] || "secret_token",
+            "auth_token" => attributes[:auth_token] || SecureRandom.hex(32),
             "event" => attributes[:event] || "installed",
             "http_method" => attributes[:http_method] || "post",
           },

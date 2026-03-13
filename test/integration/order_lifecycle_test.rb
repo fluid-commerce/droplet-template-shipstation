@@ -282,8 +282,95 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
     end
 
     it "WebhookEventJob has retry_on configured" do
-      # Verify the retry handler is registered by checking the class responds to retry behavior
       assert WebhookEventJob < ActiveJob::Base, "WebhookEventJob must inherit from ActiveJob::Base"
+    end
+  end
+
+  # ========================================================================
+  # Security: SSRF Protection
+  # ========================================================================
+
+  describe "SSRF protection" do
+    it "rejects shipped webhook with non-ShipStation resource_url" do
+      post shipped_webhook_index_url, params: {
+        resource_url: "https://evil.com/shipments?batchId=123",
+        company_id: acme.fluid_company_id,
+      }, headers: { "X-Auth-Token" => auth_token }
+
+      _(response).must_be :bad_request?
+    end
+
+    it "rejects shipped webhook with localhost resource_url" do
+      post shipped_webhook_index_url, params: {
+        resource_url: "http://localhost:3000/admin",
+        company_id: acme.fluid_company_id,
+      }, headers: { "X-Auth-Token" => auth_token }
+
+      _(response).must_be :bad_request?
+    end
+
+    it "rejects shipped webhook with internal IP resource_url" do
+      post shipped_webhook_index_url, params: {
+        resource_url: "http://169.254.169.254/latest/meta-data/",
+        company_id: acme.fluid_company_id,
+      }, headers: { "X-Auth-Token" => auth_token }
+
+      _(response).must_be :bad_request?
+    end
+
+    it "accepts shipped webhook with valid ShipStation resource_url" do
+      assert_enqueued_with(job: OrderShippedJob) do
+        post shipped_webhook_index_url, params: {
+          resource_url: "https://ssapi.shipstation.com/shipments?batchId=42",
+          company_id: acme.fluid_company_id,
+        }, headers: { "X-Auth-Token" => auth_token }
+      end
+
+      _(response.status).must_equal 202
+    end
+  end
+
+  # ========================================================================
+  # Security: Integration Settings Authentication
+  # ========================================================================
+
+  describe "integration settings authentication" do
+    it "rejects unauthenticated requests to create integration settings" do
+      post integration_settings_url, params: {
+        integration_setting: {
+          company_id: acme.id,
+          api_base_url: "https://ssapi.shipstation.com",
+          api_key: "key",
+          api_secret: "secret",
+          fluid_api_token: "token",
+        },
+      }
+
+      _(response).must_be :unauthorized?
+    end
+  end
+
+  # ========================================================================
+  # Security: Timing-Safe Token Comparison
+  # ========================================================================
+
+  describe "webhook token security" do
+    it "rejects requests with wrong auth token" do
+      post shipped_webhook_index_url, params: {
+        resource_url: "https://ssapi.shipstation.com/shipments?batchId=123",
+        company_id: acme.fluid_company_id,
+      }, headers: { "X-Auth-Token" => "wrong-token-value" }
+
+      _(response).must_be :unauthorized?
+    end
+
+    it "rejects requests with empty auth token" do
+      post shipped_webhook_index_url, params: {
+        resource_url: "https://ssapi.shipstation.com/shipments?batchId=123",
+        company_id: acme.fluid_company_id,
+      }, headers: { "X-Auth-Token" => "" }
+
+      _(response).must_be :unauthorized?
     end
   end
 end

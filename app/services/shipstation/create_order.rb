@@ -74,13 +74,26 @@ module Shipstation
       end
     end
 
+    ALLOWED_SHIPSTATION_HOSTS = %w[
+      ssapi.shipstation.com
+      ssapi6.shipstation.com
+    ].freeze
+
     def create_order_in_shipstation
       url = "#{base_url}/orders/createorder"
+      validate_shipstation_url!(url)
 
       HTTParty.post(url, {
                       headers: headers,
                       body: shipstation_payload.to_json,
                     })
+    end
+
+    def validate_shipstation_url!(url)
+      uri = URI.parse(url)
+      unless uri.scheme == "https" && ALLOWED_SHIPSTATION_HOSTS.include?(uri.host)
+        raise "Invalid ShipStation API URL: #{uri.host}. Must be an official ShipStation API endpoint."
+      end
     end
 
     def shipstation_payload

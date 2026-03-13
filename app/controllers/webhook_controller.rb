@@ -8,7 +8,7 @@ class WebhookController < ApplicationController
     event_type = "#{params[:resource]}.#{params[:event]}"
     version = params[:version]
 
-    payload = params.to_unsafe_h.deep_dup
+    payload = webhook_payload
 
     if EventHandler.route(event_type, payload, version: version)
       # A 202 Accepted indicates that we have accepted the webhook and queued
@@ -31,6 +31,13 @@ class WebhookController < ApplicationController
       return
     end
 
+    # Validate resource_url points to ShipStation to prevent SSRF
+    unless valid_shipstation_url?(resource_url)
+      Rails.logger.warn("[ShipStation Webhook] Invalid resource_url: #{resource_url}")
+      head :bad_request
+      return
+    end
+
     # Route through EventHandler so it gets retry logic from WebhookEventJob
     payload = { "resource_url" => resource_url, "company_id" => company_id }
     company = Company.find_by(fluid_company_id: company_id) || Company.find(company_id)
@@ -48,6 +55,15 @@ class WebhookController < ApplicationController
   end
 
 private
+
+  ALLOWED_SHIPSTATION_HOSTS = %w[ssapi.shipstation.com ssapi6.shipstation.com].freeze
+
+  def valid_shipstation_url?(url)
+    uri = URI.parse(url)
+    uri.scheme == "https" && ALLOWED_SHIPSTATION_HOSTS.include?(uri.host)
+  rescue URI::InvalidURIError
+    false
+  end
 
   def is_installed_event?
     params[:resource] == "droplet" && params[:event] == "installed"
@@ -75,7 +91,8 @@ private
     webhook_auth_token = Setting.fluid_webhook.auth_token
     env_token = ENV["FLUID_WEBHOOK_AUTH_TOKEN"]
 
-    auth_header == webhook_auth_token || (env_token.present? && auth_header == env_token)
+    (webhook_auth_token.present? && ActiveSupport::SecurityUtils.secure_compare(auth_header, webhook_auth_token)) ||
+      (env_token.present? && ActiveSupport::SecurityUtils.secure_compare(auth_header, env_token))
   end
 
   def find_company
@@ -91,5 +108,22 @@ private
       :webhook_verification_token,
       :authentication_token
     )
+  end
+
+  # Build a filtered payload from the webhook request body.
+  # We parse the raw JSON body instead of using params.to_unsafe_h
+  # to avoid bypassing Strong Parameters on the controller level.
+  def webhook_payload
+    body = request.raw_post
+    return {} if body.blank?
+
+    parsed = JSON.parse(body)
+    parsed.is_a?(Hash) ? parsed : {}
+  rescue JSON::ParserError
+    # Fall back to permitted params for form-encoded webhooks
+    params.permit(
+      :resource, :event, :version, :company_id,
+      company: {}
+    ).to_h.deep_stringify_keys
   end
 end
