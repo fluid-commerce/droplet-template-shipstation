@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2025_08_11_182801) do
+ActiveRecord::Schema[8.0].define(version: 2026_03_13_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -80,6 +80,34 @@ ActiveRecord::Schema[8.0].define(version: 2025_08_11_182801) do
     t.index ["name"], name: "index_settings_on_name", unique: true
   end
 
+  create_table "shipstation_orders", force: :cascade do |t|
+    t.bigint "company_id", null: false
+    t.bigint "fluid_order_id", null: false
+    t.string "fluid_order_number", null: false
+    t.string "shipstation_order_id"
+    t.string "shipstation_order_key"
+    t.string "status", default: "PENDING", null: false
+    t.text "last_error"
+    t.datetime "last_error_at"
+    t.integer "retry_count", default: 0, null: false
+    t.string "tracking_numbers", default: [], array: true
+    t.string "carrier"
+    t.string "tracking_url"
+    t.datetime "shipped_at"
+    t.boolean "tracking_synced_to_fluid", default: false, null: false
+    t.datetime "tracking_synced_at"
+    t.jsonb "request_payload", default: {}
+    t.jsonb "response_payload", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["company_id"], name: "index_shipstation_orders_on_company_id"
+    t.index ["fluid_order_id"], name: "index_shipstation_orders_on_fluid_order_id"
+    t.index ["fluid_order_number"], name: "index_shipstation_orders_on_fluid_order_number"
+    t.index ["shipstation_order_id"], name: "index_shipstation_orders_on_shipstation_order_id"
+    t.index ["status", "tracking_synced_to_fluid"], name: "index_ss_orders_on_status_and_sync"
+    t.index ["status"], name: "index_shipstation_orders_on_status"
+  end
+
   create_table "users", force: :cascade do |t|
     t.string "email", default: "", null: false
     t.string "encrypted_password", default: "", null: false
@@ -103,4 +131,5 @@ ActiveRecord::Schema[8.0].define(version: 2025_08_11_182801) do
 
   add_foreign_key "events", "companies"
   add_foreign_key "integration_settings", "companies"
+  add_foreign_key "shipstation_orders", "companies"
 end

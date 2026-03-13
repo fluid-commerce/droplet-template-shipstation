@@ -1,0 +1,45 @@
+shipped_unsynced:
+  company: acme
+  fluid_order_id: 100
+  fluid_order_number: "ORD-001"
+  shipstation_order_id: "ss-123"
+  status: "SHIPPED"
+  tracking_numbers:
+    - "1Z999"
+  carrier: "ups"
+  shipped_at: <%= 1.day.ago.to_fs(:db) %>
+  tracking_synced_to_fluid: false
+  request_payload: { "id": 100, "order_number": "ORD-001" }
+
+shipped_synced:
+  company: acme
+  fluid_order_id: 200
+  fluid_order_number: "ORD-002"
+  shipstation_order_id: "ss-456"
+  status: "SHIPPED"
+  tracking_numbers:
+    - "1Z888"
+  carrier: "fedex"
+  shipped_at: <%= 2.days.ago.to_fs(:db) %>
+  tracking_synced_to_fluid: true
+  tracking_synced_at: <%= 1.day.ago.to_fs(:db) %>
+  request_payload: { "id": 200, "order_number": "ORD-002" }
+
+failed_order:
+  company: acme
+  fluid_order_id: 300
+  fluid_order_number: "ORD-003"
+  status: "FAILED"
+  last_error: "ShipStation API error"
+  last_error_at: <%= 1.hour.ago.to_fs(:db) %>
+  retry_count: 2
+  tracking_synced_to_fluid: false
+  request_payload: { "id": 300, "order_number": "ORD-003" }
+
+pending_order:
+  company: globex
+  fluid_order_id: 400
+  fluid_order_number: "ORD-004"
+  status: "PENDING"
+  tracking_synced_to_fluid: false
+  request_payload: { "id": 400, "order_number": "ORD-004" }

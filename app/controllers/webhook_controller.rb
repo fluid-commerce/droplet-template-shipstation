@@ -2,6 +2,7 @@ class WebhookController < ApplicationController
   skip_before_action :verify_authenticity_token
   before_action :validate_droplet_authorization, if: :is_installed_event?, only: :create
   before_action :authenticate_webhook_token, unless: :is_installed_event?, only: :create
+  before_action :authenticate_shipped_webhook, only: :shipped
 
   def create
     event_type = "#{params[:resource]}.#{params[:event]}"
@@ -18,16 +19,32 @@ class WebhookController < ApplicationController
     end
   end
 
-  # analize the posibility of using same create method
   def shipped
-    Rails.logger.info("Shipped webhook received: #{params.inspect}")
+    Rails.logger.info("[ShipStation Webhook] Shipped webhook received")
 
     resource_url = params[:resource_url]
     company_id = params[:company_id]
-    Rails.logger.info("Shipped webhook resource_url: #{resource_url}")
-    Rails.logger.info("Shipped webhook company_id: #{company_id}")
 
-    OrderShippedJob.perform_later(resource_url, company_id)
+    unless resource_url.present? && company_id.present?
+      Rails.logger.warn("[ShipStation Webhook] Missing resource_url or company_id")
+      head :bad_request
+      return
+    end
+
+    # Route through EventHandler so it gets retry logic from WebhookEventJob
+    payload = { "resource_url" => resource_url, "company_id" => company_id }
+    company = Company.find_by(fluid_company_id: company_id) || Company.find(company_id)
+
+    if company
+      # Include company info so WebhookEventJob can find it
+      payload["company"] = {
+        "company_droplet_uuid" => company.company_droplet_uuid,
+        "fluid_company_id" => company.fluid_company_id,
+      }
+    end
+
+    OrderShippedJob.perform_later(payload)
+    head :accepted
   end
 
 private
@@ -45,12 +62,20 @@ private
     end
   end
 
-  def valid_auth_token?
-    # Check header auth token first, then fall back to params
-    auth_header = request.headers["AUTH_TOKEN"] || request.headers["X-Auth-Token"] || request.env["HTTP_AUTH_TOKEN"]
-    webhook_auth_token = Setting.fluid_webhook.auth_token
+  def authenticate_shipped_webhook
+    return if valid_auth_token?
 
-    (auth_header.present? && auth_header == webhook_auth_token) || auth_header == ENV["FLUID_WEBHOOK_AUTH_TOKEN"]
+    render json: { error: "Unauthorized" }, status: :unauthorized
+  end
+
+  def valid_auth_token?
+    auth_header = request.headers["AUTH_TOKEN"] || request.headers["X-Auth-Token"] || request.env["HTTP_AUTH_TOKEN"]
+    return false if auth_header.blank?
+
+    webhook_auth_token = Setting.fluid_webhook.auth_token
+    env_token = ENV["FLUID_WEBHOOK_AUTH_TOKEN"]
+
+    auth_header == webhook_auth_token || (env_token.present? && auth_header == env_token)
   end
 
   def find_company

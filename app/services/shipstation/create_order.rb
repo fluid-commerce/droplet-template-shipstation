@@ -2,15 +2,17 @@
 
 module Shipstation
   class CreateOrder < BaseService
-    attr_reader :params, :base_url, :api_key, :api_secret, :fluid_api_token, :company_name
+    attr_reader :params, :base_url, :api_key, :api_secret, :fluid_api_token, :company_name, :company
 
     def initialize(order_params)
       @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]
-      company = Company.find_by(fluid_company_id: @company_id)
+      @company = Company.find_by(fluid_company_id: @company_id)
       @company_name = company&.name
 
       integration_setting = IntegrationSetting.find_by(company_id: company.id)
+      raise "Integration settings not found for company: #{company.id}" unless integration_setting
+
       @base_url = integration_setting.settings["api_base_url"]
       @api_key = integration_setting.settings["api_key"]
       @api_secret = integration_setting.settings["api_secret"]
@@ -18,23 +20,59 @@ module Shipstation
     end
 
     def call
-      order_response = create_order_in_shipstation
+      # Create local order record for tracking
+      ss_order = find_or_create_local_order
 
+      order_response = create_order_in_shipstation
       shipstation_order_id = order_response["orderId"]
 
-      return Result.new(false, nil, "Failed to create order in ShipStation") unless shipstation_order_id.present?
-
-      begin
-        fluid_service = FluidApi::V2::OrdersService.new(fluid_api_token)
-        fluid_service.update_external_id(id: params[:id], external_id: shipstation_order_id)
-
-        Result.new(true, { shipstation_order_id: shipstation_order_id }, nil)
-      rescue StandardError => e
-        Result.new(false, nil, "Failed to update order in Fluid: #{e.message}")
+      unless shipstation_order_id.present?
+        ss_order.update!(
+          status: "FAILED",
+          last_error: "ShipStation returned no orderId",
+          last_error_at: Time.current,
+          retry_count: ss_order.retry_count + 1,
+        )
+        raise "Failed to create order in ShipStation: no orderId returned"
       end
+
+      # Update local record with ShipStation response
+      ss_order.update!(
+        status: "SUBMITTED",
+        shipstation_order_id: shipstation_order_id.to_s,
+        response_payload: order_response,
+      )
+
+      # Update Fluid with external ID
+      fluid_service = FluidApi::V2::OrdersService.new(fluid_api_token)
+      fluid_service.update_external_id(id: params[:id], external_id: shipstation_order_id)
+
+      Result.new(true, { shipstation_order_id: shipstation_order_id }, nil)
+    rescue StandardError => e
+      # Update local record on failure (if it exists)
+      if defined?(ss_order) && ss_order&.persisted?
+        ss_order.update(
+          status: "FAILED",
+          last_error: e.message,
+          last_error_at: Time.current,
+          retry_count: ss_order.retry_count + 1,
+        )
+      end
+      raise
     end
 
   private
+
+    def find_or_create_local_order
+      ShipstationOrder.find_or_create_by!(
+        company: company,
+        fluid_order_id: params[:id],
+      ) do |order|
+        order.fluid_order_number = params[:order_number]
+        order.status = "PENDING"
+        order.request_payload = params
+      end
+    end
 
     def create_order_in_shipstation
       url = "#{base_url}/orders/createorder"
@@ -64,7 +102,6 @@ module Shipstation
     end
 
     def bill_to_payload
-      # we don"t have billTo in the payload, so we use shipTo
       ship_to_payload
     end
 
@@ -86,7 +123,7 @@ module Shipstation
     def shipstation_items
       params[:items].map do |item|
         {
-          lineItemKey: "vd08-MSLbtx",
+          lineItemKey: item[:id].to_s,
           sku: item[:sku],
           name: item[:title],
           imageUrl: item.dig(:product, :image_url),
@@ -100,7 +137,6 @@ module Shipstation
       end
     end
 
-    # Simple result object to match controller expectations
     class Result
       attr_reader :success, :data, :error
 
