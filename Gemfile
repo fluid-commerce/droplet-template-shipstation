@@ -15,6 +15,7 @@ gem "minitest-rails", "~> 8.0.0"
 gem "pg", "~> 1.1"
 gem "propshaft"
 gem "puma", ">= 5.0"
+gem "sentry-ruby"
 gem "sentry-rails"
 gem "solid_cable"
 gem "solid_cache"
@@ -35,6 +36,7 @@ end
 
 group :development do
   gem "web-console"
+  gem "dotenv-rails"
 end
 
 group :test do
