@@ -4,10 +4,6 @@ module Shipstation
   class CreateOrder < BaseService
     attr_reader :params, :api_key, :api_secret, :company_name, :company
 
-    # ShipStation's V1 API base is the same host for every store; the store is
-    # identified by the API key/secret, not the URL.
-    SHIPSTATION_API_BASE = "https://ssapi.shipstation.com"
-
     def initialize(order_params)
       @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]

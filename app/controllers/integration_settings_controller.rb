@@ -17,6 +17,12 @@ class IntegrationSettingsController < ApplicationController
     render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
   end
 
+  def test_connection
+    connected = Shipstation::TestConnection.new(params[:company_id]).call
+
+    render json: { connection: connected }
+  end
+
 private
 
   def authenticate_request
