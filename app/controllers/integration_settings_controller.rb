@@ -1,9 +1,13 @@
 class IntegrationSettingsController < ApplicationController
+  include DriAuthenticatable
+
   skip_before_action :verify_authenticity_token
-  before_action :authenticate_request
+  before_action :require_xhr
+  before_action :authenticate_dri
 
   def create
-    integration_setting = IntegrationSetting.find_or_initialize_by(company_id: integration_setting_params[:company_id])
+    integration_setting = current_company.integration_setting ||
+      current_company.build_integration_setting
 
     integration_setting.settings = {
       api_key: integration_setting_params[:api_key],
@@ -12,35 +16,29 @@ class IntegrationSettingsController < ApplicationController
 
     integration_setting.save!
 
-    render json: integration_setting, status: :created
+    render json: { id: integration_setting.id }, status: :created
   rescue ActiveRecord::RecordInvalid => e
     render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
   end
 
   def test_connection
-    connected = Shipstation::TestConnection.new(params[:company_id]).call
+    connected = Shipstation::TestConnection.new(current_company.id).call
 
     render json: { connection: connected }
   end
 
 private
 
-  def authenticate_request
-    return if valid_internal_token?
+  # Defense against CSRF/cross-origin form posts now that Rails token
+  # verification is skipped: browsers only allow this header on same-origin
+  # scripted (fetch/XHR) requests, so a cross-site form cannot forge it.
+  def require_xhr
+    return if request.headers["X-Requested-With"] == "XMLHttpRequest"
 
     render json: { error: "Unauthorized" }, status: :unauthorized
   end
 
-  def valid_internal_token?
-    auth_header = request.headers["Authorization"]
-    return false if auth_header.blank?
-
-    token = auth_header.remove("Bearer ").strip
-    expected = ENV["INTERNAL_API_TOKEN"]
-    expected.present? && ActiveSupport::SecurityUtils.secure_compare(token, expected)
-  end
-
   def integration_setting_params
-    params.require(:integration_setting).permit(:company_id, :api_key, :api_secret)
+    params.require(:integration_setting).permit(:api_key, :api_secret)
   end
 end

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import ConfigurationForm from "../components/ConfigurationForm";
 
 interface FluidProps {
-  companyId: string;
+  dri: string;
   apiKey: string;
   apiSecret: string;
 }
@@ -63,13 +63,13 @@ const TabContent: React.FC<TabContentProps> = ({ tabs, activeTab }) => {
   return <Component {...activeTabData.props} />;
 };
 
-const Fluid = ({ companyId, apiKey, apiSecret }: FluidProps) => {
+const Fluid = ({ dri, apiKey, apiSecret }: FluidProps) => {
   const tabs: TabItem[] = [
     {
       id: 'configuration',
       label: 'Configuration',
       component: ConfigurationForm,
-      props: { companyId, apiKey, apiSecret }
+      props: { dri, apiKey, apiSecret }
     }
   ];
 
@@ -87,8 +87,8 @@ const Fluid = ({ companyId, apiKey, apiSecret }: FluidProps) => {
 const root = createRoot(document.getElementById('root') as HTMLElement);
 
 const rootElement = document.getElementById('root') as HTMLElement;
-const companyId = rootElement.dataset.companyId || '';
+const dri = rootElement.dataset.dri || '';
 const apiKey = rootElement.dataset.apiKey || '';
 const apiSecret = rootElement.dataset.apiSecret || '';
 
-root.render(<Fluid companyId={companyId} apiKey={apiKey} apiSecret={apiSecret} />);
+root.render(<Fluid dri={dri} apiKey={apiKey} apiSecret={apiSecret} />);

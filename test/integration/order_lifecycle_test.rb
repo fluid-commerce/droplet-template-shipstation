@@ -331,23 +331,62 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
   # Security: Integration Settings Authentication
   # ========================================================================
 
-  describe "integration settings authentication" do
-    it "rejects unauthenticated requests to create integration settings" do
-      post integration_settings_url, params: {
-        integration_setting: {
-          company_id: acme.id,
-          api_key: "key",
-          api_secret: "secret",
-        },
-      }
+  describe "integration settings authentication (DRI)" do
+    let(:xhr_headers) { { "X-Requested-With" => "XMLHttpRequest" } }
+    let(:acme_dri) { acme.droplet_installation_uuid }
+
+    it "rejects create requests with no DRI" do
+      post integration_settings_url,
+        params: { integration_setting: { api_key: "k", api_secret: "s" } },
+        headers: xhr_headers, as: :json
 
       _(response).must_be :unauthorized?
     end
 
-    it "rejects unauthenticated requests to test connection" do
-      post test_connection_integration_settings_url, params: { company_id: acme.id }
+    it "rejects create requests with an unknown DRI" do
+      post integration_settings_url,
+        params: { dri: "nope-does-not-exist", integration_setting: { api_key: "k", api_secret: "s" } },
+        headers: xhr_headers, as: :json
 
       _(response).must_be :unauthorized?
+    end
+
+    it "rejects create requests without the XMLHttpRequest header" do
+      post integration_settings_url,
+        params: { dri: acme_dri, integration_setting: { api_key: "k", api_secret: "s" } },
+        as: :json
+
+      _(response).must_be :unauthorized?
+    end
+
+    it "saves settings scoped to the company identified by the DRI" do
+      post integration_settings_url,
+        params: { dri: acme_dri, integration_setting: { api_key: "my-key", api_secret: "my-secret" } },
+        headers: xhr_headers, as: :json
+
+      _(response).must_be :created?
+      setting = acme.reload.integration_setting
+      _(setting).wont_be_nil
+      _(setting.settings["api_key"]).must_equal "my-key"
+      _(setting.settings["api_secret"]).must_equal "my-secret"
+    end
+
+    it "rejects test connection with no DRI" do
+      post test_connection_integration_settings_url, params: {}, headers: xhr_headers, as: :json
+
+      _(response).must_be :unauthorized?
+    end
+
+    it "returns the connection status for a valid DRI" do
+      acme.create_integration_setting!(settings: { api_key: "k", api_secret: "s" })
+
+      HTTParty.stub(:get, OpenStruct.new(code: 200)) do
+        post test_connection_integration_settings_url,
+          params: { dri: acme_dri }, headers: xhr_headers, as: :json
+      end
+
+      _(response).must_be :ok?
+      _(JSON.parse(response.body)["connection"]).must_equal true
     end
   end
 
