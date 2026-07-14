@@ -245,19 +245,16 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
       unsynced = shipstation_orders(:shipped_unsynced)
       synced = shipstation_orders(:shipped_synced)
 
-      mock_setting = OpenStruct.new(settings: { "fluid_api_token" => "token" })
       fluid_body = { order: { id: unsynced.fluid_order_id, items: [ { id: 1, quantity: 2 } ] } }.to_json
       fulfillment_body = { order_fulfillment: { id: 1 } }.to_json
 
-      IntegrationSetting.stub(:find_by, mock_setting) do
-        FluidApi::Commerce::OrderService.define_method(:retrieve_order) { |**_| OpenStruct.new(body: fluid_body) }
-        FluidApi::Commerce::OrderService.define_method(:order_fulfillment) { |**_| OpenStruct.new(body: fulfillment_body) }
+      FluidApi::Commerce::OrderService.define_method(:retrieve_order) { |**_| OpenStruct.new(body: fluid_body) }
+      FluidApi::Commerce::OrderService.define_method(:order_fulfillment) { |**_| OpenStruct.new(body: fulfillment_body) }
 
-        SyncTrackingJob.perform_now
+      SyncTrackingJob.perform_now
 
-        FluidApi::Commerce::OrderService.remove_method(:retrieve_order)
-        FluidApi::Commerce::OrderService.remove_method(:order_fulfillment)
-      end
+      FluidApi::Commerce::OrderService.remove_method(:retrieve_order)
+      FluidApi::Commerce::OrderService.remove_method(:order_fulfillment)
 
       unsynced.reload
       synced.reload
@@ -342,7 +339,6 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
           api_base_url: "https://ssapi.shipstation.com",
           api_key: "key",
           api_secret: "secret",
-          fluid_api_token: "token",
         },
       }
 

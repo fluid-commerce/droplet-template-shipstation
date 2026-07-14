@@ -2,7 +2,7 @@
 
 module Shipstation
   class CreateOrder < BaseService
-    attr_reader :params, :base_url, :api_key, :api_secret, :fluid_api_token, :company_name, :company
+    attr_reader :params, :base_url, :api_key, :api_secret, :company_name, :company
 
     def initialize(order_params)
       @params = order_params["order"].deep_symbolize_keys
@@ -16,7 +16,6 @@ module Shipstation
       @base_url = integration_setting.settings["api_base_url"]
       @api_key = integration_setting.settings["api_key"]
       @api_secret = integration_setting.settings["api_secret"]
-      @fluid_api_token = integration_setting.settings["fluid_api_token"]
     end
 
     def call
@@ -43,8 +42,8 @@ module Shipstation
         response_payload: order_response,
       )
 
-      # Update Fluid with external ID
-      fluid_service = FluidApi::V2::OrdersService.new(fluid_api_token)
+      # Update Fluid with external ID using the droplet install token
+      fluid_service = FluidApi::V2::OrdersService.new(company.authentication_token)
       fluid_service.update_external_id(id: params[:id], external_id: shipstation_order_id)
 
       Result.new(true, { shipstation_order_id: shipstation_order_id }, nil)

@@ -9,7 +9,6 @@ class IntegrationSettingsController < ApplicationController
       api_base_url: integration_setting_params[:api_base_url],
       api_key: integration_setting_params[:api_key],
       api_secret: integration_setting_params[:api_secret],
-      fluid_api_token: integration_setting_params[:fluid_api_token],
     }
 
     integration_setting.save!
@@ -37,6 +36,6 @@ private
   end
 
   def integration_setting_params
-    params.require(:integration_setting).permit(:company_id, :api_base_url, :api_key, :api_secret, :fluid_api_token)
+    params.require(:integration_setting).permit(:company_id, :api_base_url, :api_key, :api_secret)
   end
 end
