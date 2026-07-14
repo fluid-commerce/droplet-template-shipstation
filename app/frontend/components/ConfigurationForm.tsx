@@ -7,12 +7,11 @@ interface ConfigurationFormProps {
   baseUrl: string;
   apiKey: string;
   apiSecret: string;
-  fluidApiToken: string;
 }
 
 type ConnectionStatus = 'default' | 'connecting' | 'connected' | 'error';
 
-const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUrl, apiKey, apiSecret, fluidApiToken }) => {
+const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUrl, apiKey, apiSecret }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('default');
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -24,7 +23,6 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUr
         api_base_url: formData.get('baseUrl'),
         api_key: formData.get('apiKey'),
         api_secret: formData.get('apiSecret'),
-        fluid_api_token: formData.get('fluidApiToken'),
       }
     };
 
@@ -84,7 +82,7 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUr
             <p className="text-sm text-gray-600">Configure your base settings</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 API Base URL*
@@ -95,32 +93,6 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUr
                 placeholder="Store Name"
                 defaultValue={baseUrl}
               />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Fluid API Token*
-              </label>
-              <TextInput
-                type="text"
-                name="fluidApiToken"
-                placeholder="Fluid API Token"
-                defaultValue={fluidApiToken}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Type*
-              </label>
-              <select
-                name="fluidApiToken"
-                defaultValue="Production"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="Production">Production</option>
-                <option value="SandBox">SandBox</option>
-              </select>
             </div>
           </div>
         </div>

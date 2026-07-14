@@ -7,7 +7,6 @@ interface FluidProps {
   baseUrl: string;
   apiKey: string;
   apiSecret: string;
-  fluidApiToken: string;
 }
 
 // Interfaces
@@ -65,13 +64,13 @@ const TabContent: React.FC<TabContentProps> = ({ tabs, activeTab }) => {
   return <Component {...activeTabData.props} />;
 };
 
-const Fluid = ({ companyId, baseUrl, apiKey, apiSecret, fluidApiToken }: FluidProps) => {
+const Fluid = ({ companyId, baseUrl, apiKey, apiSecret }: FluidProps) => {
   const tabs: TabItem[] = [
     {
       id: 'configuration',
       label: 'Configuration',
       component: ConfigurationForm,
-      props: { companyId, baseUrl, apiKey, apiSecret, fluidApiToken }
+      props: { companyId, baseUrl, apiKey, apiSecret }
     }
   ];
 
@@ -93,6 +92,5 @@ const companyId = rootElement.dataset.companyId || '';
 const baseUrl = rootElement.dataset.baseUrl || '';
 const apiKey = rootElement.dataset.apiKey || '';
 const apiSecret = rootElement.dataset.apiSecret || '';
-const fluidApiToken = rootElement.dataset.fluidApiToken || '';
 
-root.render(<Fluid companyId={companyId} baseUrl={baseUrl} apiKey={apiKey} apiSecret={apiSecret} fluidApiToken={fluidApiToken} />);
+root.render(<Fluid companyId={companyId} baseUrl={baseUrl} apiKey={apiKey} apiSecret={apiSecret} />);

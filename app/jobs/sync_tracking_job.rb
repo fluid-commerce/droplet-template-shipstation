@@ -34,15 +34,14 @@ class SyncTrackingJob < ApplicationJob
 private
 
   def sync_order(order)
-    integration_setting = IntegrationSetting.find_by(company_id: order.company_id)
+    authentication_token = order.company&.authentication_token
 
-    unless integration_setting&.settings&.dig("fluid_api_token").present?
-      Rails.logger.warn("[SyncTracking] No Fluid API token for company on order #{order.fluid_order_number}")
+    if authentication_token.blank?
+      Rails.logger.warn("[SyncTracking] No authentication token for company on order #{order.fluid_order_number}")
       return
     end
 
-    fluid_api_token = integration_setting.settings["fluid_api_token"]
-    order_service = FluidApi::Commerce::OrderService.new(fluid_api_token)
+    order_service = FluidApi::Commerce::OrderService.new(authentication_token)
 
     # Fetch order items from Fluid
     fluid_response = order_service.retrieve_order(id: order.fluid_order_id)
