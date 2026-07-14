@@ -336,7 +336,6 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
       post integration_settings_url, params: {
         integration_setting: {
           company_id: acme.id,
-          api_base_url: "https://ssapi.shipstation.com",
           api_key: "key",
           api_secret: "secret",
         },

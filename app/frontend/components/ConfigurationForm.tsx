@@ -4,14 +4,13 @@ import ConnectionStatusButton from './ConnectionStatusButton';
 
 interface ConfigurationFormProps {
   companyId: string;
-  baseUrl: string;
   apiKey: string;
   apiSecret: string;
 }
 
 type ConnectionStatus = 'default' | 'connecting' | 'connected' | 'error';
 
-const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUrl, apiKey, apiSecret }) => {
+const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, apiKey, apiSecret }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('default');
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -20,7 +19,6 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUr
     const data = {
       integration_setting: {
         company_id: companyId,
-        api_base_url: formData.get('baseUrl'),
         api_key: formData.get('apiKey'),
         api_secret: formData.get('apiSecret'),
       }
@@ -76,27 +74,6 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, baseUr
   return (
     <div className="w-full mt-4">
       <form className="space-y-8" onSubmit={handleSubmit}>
-        <div className="bg-white rounded-lg p-6 border border-gray-200">
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Base Settings</h2>
-            <p className="text-sm text-gray-600">Configure your base settings</p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                API Base URL*
-              </label>
-              <TextInput
-                type="text"
-                name="baseUrl"
-                placeholder="Store Name"
-                defaultValue={baseUrl}
-              />
-            </div>
-          </div>
-        </div>
-
         <div className="bg-white rounded-lg p-6 border border-gray-200">
           <div className="mb-4">
             <h2 className="text-lg font-semibold text-gray-900">API Credentials</h2>

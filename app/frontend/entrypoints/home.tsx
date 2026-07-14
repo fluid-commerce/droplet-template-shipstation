@@ -4,7 +4,6 @@ import ConfigurationForm from "../components/ConfigurationForm";
 
 interface FluidProps {
   companyId: string;
-  baseUrl: string;
   apiKey: string;
   apiSecret: string;
 }
@@ -64,13 +63,13 @@ const TabContent: React.FC<TabContentProps> = ({ tabs, activeTab }) => {
   return <Component {...activeTabData.props} />;
 };
 
-const Fluid = ({ companyId, baseUrl, apiKey, apiSecret }: FluidProps) => {
+const Fluid = ({ companyId, apiKey, apiSecret }: FluidProps) => {
   const tabs: TabItem[] = [
     {
       id: 'configuration',
       label: 'Configuration',
       component: ConfigurationForm,
-      props: { companyId, baseUrl, apiKey, apiSecret }
+      props: { companyId, apiKey, apiSecret }
     }
   ];
 
@@ -89,8 +88,7 @@ const root = createRoot(document.getElementById('root') as HTMLElement);
 
 const rootElement = document.getElementById('root') as HTMLElement;
 const companyId = rootElement.dataset.companyId || '';
-const baseUrl = rootElement.dataset.baseUrl || '';
 const apiKey = rootElement.dataset.apiKey || '';
 const apiSecret = rootElement.dataset.apiSecret || '';
 
-root.render(<Fluid companyId={companyId} baseUrl={baseUrl} apiKey={apiKey} apiSecret={apiSecret} />);
+root.render(<Fluid companyId={companyId} apiKey={apiKey} apiSecret={apiSecret} />);
