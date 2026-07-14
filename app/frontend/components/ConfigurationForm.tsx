@@ -3,22 +3,30 @@ import { TextInput } from "./input/TextInput";
 import ConnectionStatusButton from './ConnectionStatusButton';
 
 interface ConfigurationFormProps {
-  companyId: string;
+  dri: string;
   apiKey: string;
   apiSecret: string;
 }
 
 type ConnectionStatus = 'default' | 'connecting' | 'connected' | 'error';
 
-const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, apiKey, apiSecret }) => {
+// Headers for authenticated, same-origin JSON requests. The DRI authenticates
+// and scopes the request server-side; X-Requested-With guards against
+// cross-origin form posts now that Rails CSRF token verification is skipped.
+const jsonHeaders = (): HeadersInit => ({
+  'Content-Type': 'application/json',
+  'X-Requested-With': 'XMLHttpRequest',
+});
+
+const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiSecret }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('default');
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     const data = {
+      dri,
       integration_setting: {
-        company_id: companyId,
         api_key: formData.get('apiKey'),
         api_secret: formData.get('apiSecret'),
       }
@@ -27,10 +35,7 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, apiKey
     // Send form data to your endpoint
     fetch('/integration_settings', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-      },
+      headers: jsonHeaders(),
       body: JSON.stringify(data),
     })
     .then(response => {
@@ -51,11 +56,8 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ companyId, apiKey
 
     fetch('/integration_settings/test_connection', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-      },
-      body: JSON.stringify({company_id: companyId}),
+      headers: jsonHeaders(),
+      body: JSON.stringify({ dri }),
     })
     .then(response => response.json())
     .then(data => {

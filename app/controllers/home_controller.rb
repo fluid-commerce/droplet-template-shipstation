@@ -1,6 +1,7 @@
 class HomeController < ApplicationController
   def index
-    @company_id = Company.find_by(droplet_installation_uuid: params[:dri])&.id
-    @integration_settings = IntegrationSetting.find_by(company_id: @company_id)
+    @dri = params[:dri]
+    company = Company.find_by(droplet_installation_uuid: @dri)
+    @integration_settings = company&.integration_setting
   end
 end
