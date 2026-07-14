@@ -94,7 +94,7 @@ module Shipstation
     end
 
     def ss_shipments(batch_id)
-      response = HTTParty.get("https://ssapi.shipstation.com/shipments",
+      response = HTTParty.get("#{SHIPSTATION_API_BASE}/shipments",
         query: { batchId: batch_id },
         headers: headers)
 

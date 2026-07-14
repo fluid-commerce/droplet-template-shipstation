@@ -343,6 +343,12 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
 
       _(response).must_be :unauthorized?
     end
+
+    it "rejects unauthenticated requests to test connection" do
+      post test_connection_integration_settings_url, params: { company_id: acme.id }
+
+      _(response).must_be :unauthorized?
+    end
   end
 
   # ========================================================================
