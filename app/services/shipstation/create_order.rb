@@ -2,7 +2,11 @@
 
 module Shipstation
   class CreateOrder < BaseService
-    attr_reader :params, :base_url, :api_key, :api_secret, :company_name, :company
+    attr_reader :params, :api_key, :api_secret, :company_name, :company
+
+    # ShipStation's V1 API base is the same host for every store; the store is
+    # identified by the API key/secret, not the URL.
+    SHIPSTATION_API_BASE = "https://ssapi.shipstation.com"
 
     def initialize(order_params)
       @params = order_params["order"].deep_symbolize_keys
@@ -13,7 +17,6 @@ module Shipstation
       integration_setting = IntegrationSetting.find_by(company_id: company.id)
       raise "Integration settings not found for company: #{company.id}" unless integration_setting
 
-      @base_url = integration_setting.settings["api_base_url"]
       @api_key = integration_setting.settings["api_key"]
       @api_secret = integration_setting.settings["api_secret"]
     end
@@ -73,26 +76,11 @@ module Shipstation
       end
     end
 
-    ALLOWED_SHIPSTATION_HOSTS = %w[
-      ssapi.shipstation.com
-      ssapi6.shipstation.com
-    ].freeze
-
     def create_order_in_shipstation
-      url = "#{base_url}/orders/createorder"
-      validate_shipstation_url!(url)
-
-      HTTParty.post(url, {
+      HTTParty.post("#{SHIPSTATION_API_BASE}/orders/createorder", {
                       headers: headers,
                       body: shipstation_payload.to_json,
                     })
-    end
-
-    def validate_shipstation_url!(url)
-      uri = URI.parse(url)
-      unless uri.scheme == "https" && ALLOWED_SHIPSTATION_HOSTS.include?(uri.host)
-        raise "Invalid ShipStation API URL: #{uri.host}. Must be an official ShipStation API endpoint."
-      end
     end
 
     def shipstation_payload
