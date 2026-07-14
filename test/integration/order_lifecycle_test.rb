@@ -378,12 +378,12 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
     end
 
     it "returns the connection status for a valid DRI" do
-      Shipstation::TestConnection.define_method(:call) { true }
+      acme.create_integration_setting!(settings: { api_key: "k", api_secret: "s" })
 
-      post test_connection_integration_settings_url,
-        params: { dri: acme_dri }, headers: xhr_headers, as: :json
-
-      Shipstation::TestConnection.remove_method(:call)
+      HTTParty.stub(:get, OpenStruct.new(code: 200)) do
+        post test_connection_integration_settings_url,
+          params: { dri: acme_dri }, headers: xhr_headers, as: :json
+      end
 
       _(response).must_be :ok?
       _(JSON.parse(response.body)["connection"]).must_equal true
