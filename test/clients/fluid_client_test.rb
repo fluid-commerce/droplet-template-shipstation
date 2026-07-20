@@ -62,6 +62,30 @@ describe FluidClient do
     end
   end
 
+  describe "webhooks payload url" do
+    it "builds the webhook url from APP_URL when present" do
+      Tasks::Settings.create_defaults
+      original = ENV["APP_URL"]
+      ENV["APP_URL"] = "https://ship.example.run.app"
+
+      client = FluidClient.new
+      _(client.webhooks.payload["webhook"]["url"]).must_equal "https://ship.example.run.app/webhook"
+    ensure
+      ENV["APP_URL"] = original
+    end
+
+    it "falls back to the host_server setting when APP_URL is blank" do
+      Tasks::Settings.create_defaults
+      original = ENV["APP_URL"]
+      ENV.delete("APP_URL")
+
+      client = FluidClient.new
+      _(client.webhooks.payload["webhook"]["url"]).must_equal "http://localhost:3000/webhook"
+    ensure
+      ENV["APP_URL"] = original
+    end
+  end
+
   describe "callback_definitions" do
     it "returns callback_definitions resource" do
       Tasks::Settings.create_defaults
