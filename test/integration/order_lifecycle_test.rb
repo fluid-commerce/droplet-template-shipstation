@@ -54,6 +54,19 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
       _(response).wont_be :unauthorized?
       _([ 202, 204 ]).must_include response.status
     end
+
+    it "accepts a request authenticated with the company's webhook_verification_token" do
+      post webhook_index_url, params: {
+        resource: "order",
+        event: "created",
+        company_id: acme.fluid_company_id,
+        company: { fluid_company_id: acme.fluid_company_id },
+        order: { id: 111, order_number: "PCT-111" },
+      }, headers: { "X-Auth-Token" => acme.webhook_verification_token }
+
+      _(response).wont_be :unauthorized?
+      _([ 202, 204 ]).must_include response.status
+    end
   end
 
   # ========================================================================

@@ -95,11 +95,17 @@ private
     auth_header = request.headers["AUTH_TOKEN"] || request.headers["X-Auth-Token"] || request.env["HTTP_AUTH_TOKEN"]
     return false if auth_header.blank?
 
-    webhook_auth_token = Setting.fluid_webhook.auth_token
-    env_token = ENV["FLUID_WEBHOOK_AUTH_TOKEN"]
+    # Fluid registers each company's webhooks with that company's
+    # webhook_verification_token, so incoming per-company webhooks (e.g.
+    # order.created) carry it. Accept it in addition to the legacy global
+    # tokens (Setting/ENV) for backward compatibility.
+    candidate_tokens = [
+      find_company&.webhook_verification_token,
+      Setting.fluid_webhook.auth_token,
+      ENV["FLUID_WEBHOOK_AUTH_TOKEN"],
+    ].compact_blank
 
-    (webhook_auth_token.present? && ActiveSupport::SecurityUtils.secure_compare(auth_header, webhook_auth_token)) ||
-      (env_token.present? && ActiveSupport::SecurityUtils.secure_compare(auth_header, env_token))
+    candidate_tokens.any? { |token| ActiveSupport::SecurityUtils.secure_compare(auth_header, token) }
   end
 
   def find_company
