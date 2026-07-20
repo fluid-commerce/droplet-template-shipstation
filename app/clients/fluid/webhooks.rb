@@ -40,10 +40,13 @@ module Fluid
 
     private
 
+      # The public URL Fluid should POST this droplet's webhooks to. Built from
+      # the droplet's own base URL (APP_URL, falling back to the host_server
+      # setting) plus the webhook path. `resources :webhook` generates the
+      # `webhook_index_*` helpers because the resource name is singular.
       def webhook_url
-        # `resources :webhook` generates the `webhook_index_*` URL helpers (not
-        # `webhook_*`), because the resource name is singular.
-        Rails.application.routes.url_helpers.webhook_index_url(host: Setting.host_server.base_url)
+        base = ENV["APP_URL"].presence || Setting.host_server.base_url
+        "#{base.chomp('/')}#{Rails.application.routes.url_helpers.webhook_index_path}"
       end
     end
   end
