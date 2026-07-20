@@ -79,10 +79,11 @@ private
   def create_order_created_webhook(company)
     client = FluidClient.new(company.authentication_token)
 
-    begin
-      client.webhooks.create(resource: "order", event: "created", auth_token: company.authentication_token)
-    rescue FluidClient::Error => e
-      Rails.logger.error "Failed to create order created webhook: #{e.message}"
-    end
+    client.webhooks.create(resource: "order", event: "created", auth_token: company.authentication_token)
+  rescue StandardError => e
+    # Registering the order webhook is best-effort: a failure here must not
+    # roll back the surrounding install transaction (and thus the company
+    # record). Log and move on; registration can be reconciled later.
+    Rails.logger.error("[DropletInstalledJob] Failed to create order created webhook: #{e.class}: #{e.message}")
   end
 end

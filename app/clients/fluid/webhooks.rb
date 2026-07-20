@@ -41,7 +41,9 @@ module Fluid
     private
 
       def webhook_url
-        Rails.application.routes.url_helpers.webhook_url(host: Setting.host_server.base_url)
+        # `resources :webhook` generates the `webhook_index_*` URL helpers (not
+        # `webhook_*`), because the resource name is singular.
+        Rails.application.routes.url_helpers.webhook_index_url(host: Setting.host_server.base_url)
       end
     end
   end
