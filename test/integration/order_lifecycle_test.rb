@@ -57,6 +57,55 @@ class OrderLifecycleTest < ActionDispatch::IntegrationTest
   end
 
   # ========================================================================
+  # Droplet Installed Webhook (flat + Fluid "payload" envelope)
+  # ========================================================================
+
+  describe "droplet installed webhook" do
+    def company_payload
+      {
+        authentication_token: "dit_test",
+        webhook_verification_token: "wvt_test",
+        droplet_installation_uuid: "dri_test123",
+        droplet_uuid: Setting.droplet.uuid, # must match the configured droplet uuid
+        company_droplet_uuid: "cdu_test",
+        fluid_company_id: 555_001,
+        fluid_shop: "test.fluid.app",
+        name: "Test Co",
+      }
+    end
+
+    it "accepts the nested payload-enveloped install format" do
+      assert_enqueued_with(job: DropletInstalledJob) do
+        post webhook_index_url, params: {
+          name: "droplet_installed",
+          payload: { resource: "droplet", event: "installed", company: company_payload },
+        }, as: :json
+      end
+
+      _(response.status).must_equal 202
+    end
+
+    it "still accepts the flat install format" do
+      assert_enqueued_with(job: DropletInstalledJob) do
+        post webhook_index_url, params: {
+          resource: "droplet", event: "installed", company: company_payload,
+        }, as: :json
+      end
+
+      _(response.status).must_equal 202
+    end
+
+    it "rejects an install whose droplet_uuid does not match" do
+      post webhook_index_url, params: {
+        name: "droplet_installed",
+        payload: { resource: "droplet", event: "installed", company: company_payload.merge(droplet_uuid: "wrong") },
+      }, as: :json
+
+      _(response).must_be :unauthorized?
+    end
+  end
+
+  # ========================================================================
   # Order Created Flow
   # ========================================================================
 

@@ -40,11 +40,14 @@ describe EventHandler do
   end
 
   after do
-    # Restore default handlers after each test
+    # Restore the real default handlers (must match
+    # config/initializers/event_handler.rb) so this test does not corrupt the
+    # class-level EVENT_HANDLERS registry for subsequent tests.
     EventHandler::EVENT_HANDLERS.clear
-    EventHandler.register_handler("company_droplet.created", DropletInstalledJob)
-    EventHandler.register_handler("company_droplet.uninstalled", DropletUninstalledJob)
-    EventHandler.register_handler("company_droplet.installed", DropletReinstalledJob)
+    EventHandler.register_handler("droplet.uninstalled", DropletUninstalledJob)
+    EventHandler.register_handler("droplet.installed", DropletInstalledJob)
+    EventHandler.register_handler("order.created", OrderCreatedJob)
+    EventHandler.register_handler("order.shipped", OrderShippedJob)
   end
 
   describe "handler registration and routing" do

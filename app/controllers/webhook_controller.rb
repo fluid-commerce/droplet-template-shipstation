@@ -5,12 +5,10 @@ class WebhookController < ApplicationController
   before_action :authenticate_shipped_webhook, only: :shipped
 
   def create
-    event_type = "#{params[:resource]}.#{params[:event]}"
-    version = params[:version]
+    event_type = "#{effective_payload["resource"]}.#{effective_payload["event"]}"
+    version = effective_payload["version"]
 
-    payload = webhook_payload
-
-    if EventHandler.route(event_type, payload, version: version)
+    if EventHandler.route(event_type, effective_payload, version: version)
       # A 202 Accepted indicates that we have accepted the webhook and queued
       # the appropriate background job for processing.
       head :accepted
@@ -66,7 +64,16 @@ private
   end
 
   def is_installed_event?
-    params[:resource] == "droplet" && params[:event] == "installed"
+    effective_payload["resource"] == "droplet" && effective_payload["event"] == "installed"
+  end
+
+  # Overrides ApplicationController#validate_droplet_authorization to read the
+  # droplet uuid from the (possibly enveloped) webhook payload rather than
+  # top-level params.
+  def validate_droplet_authorization
+    return if effective_payload.dig("company", "droplet_uuid") == Setting.droplet.uuid
+
+    render json: { error: "Unauthorized" }, status: :unauthorized
   end
 
   def authenticate_webhook_token
@@ -96,34 +103,39 @@ private
   end
 
   def find_company
-    fluid_company_id = params[:company_id] || company_params[:fluid_company_id]
+    fluid_company_id = effective_payload["company_id"] || effective_payload.dig("company", "fluid_company_id")
     Company.find_by(fluid_company_id: fluid_company_id)
   end
 
-  def company_params
-    params.require(:company).permit(
-      :company_droplet_uuid,
-      :droplet_installation_uuid,
-      :fluid_company_id,
-      :webhook_verification_token,
-      :authentication_token
-    )
+  # Fluid delivers webhooks either flat or wrapped in a "payload" envelope.
+  # Normalize to the inner content so resource/event/company reads work
+  # regardless of shape:
+  #   Flat:   { "resource" => "droplet", "event" => "installed", "company" => {...} }
+  #   Nested: { "name" => "...", "payload" => { "resource" => "...", "company" => {...} } }
+  def effective_payload
+    @effective_payload ||= begin
+      inner = raw_webhook_body["payload"]
+      inner.is_a?(Hash) && inner["resource"].present? ? inner : raw_webhook_body
+    end
   end
 
-  # Build a filtered payload from the webhook request body.
-  # We parse the raw JSON body instead of using params.to_unsafe_h
-  # to avoid bypassing Strong Parameters on the controller level.
-  def webhook_payload
-    body = request.raw_post
-    return {} if body.blank?
-
-    parsed = JSON.parse(body)
-    parsed.is_a?(Hash) ? parsed : {}
-  rescue JSON::ParserError
-    # Fall back to permitted params for form-encoded webhooks
-    params.permit(
-      :resource, :event, :version, :company_id,
-      company: {}
-    ).to_h.deep_stringify_keys
+  # Parse the raw JSON request body. We read the body instead of params to get
+  # the full webhook envelope before normalization.
+  def raw_webhook_body
+    @raw_webhook_body ||= begin
+      body = request.raw_post
+      if body.blank?
+        {}
+      else
+        parsed = JSON.parse(body)
+        parsed.is_a?(Hash) ? parsed : {}
+      end
+    rescue JSON::ParserError
+      # Fall back to permitted params for form-encoded webhooks
+      params.permit(
+        :resource, :event, :version, :company_id,
+        company: {}, payload: {}
+      ).to_h.deep_stringify_keys
+    end
   end
 end
