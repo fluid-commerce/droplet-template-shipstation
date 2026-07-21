@@ -42,6 +42,15 @@ describe IntegrationSettingsController do
     _(setting.batch_window_minutes).must_equal 30
   end
 
+  it "rejects a zero or negative batch window" do
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: {
+        api_key: "k", api_secret: "s", hold_for_batch: "true", batch_window_minutes: "0",
+      }, },
+      headers: xhr
+    must_respond_with :unprocessable_entity
+  end
+
   it "requires the XHR header" do
     post integration_settings_url,
       params: { dri: dri, integration_setting: { api_key: "k", api_secret: "s" } }

@@ -19,13 +19,14 @@ class OrdersController < ApplicationController
   end
 
   # Resends an order to ShipStation immediately, bypassing the batching hold.
-  # Only orders that haven't reached ShipStation yet (HELD / AWAITING_PAYMENT /
-  # FAILED / PENDING) can be resent; SUBMITTED/SHIPPED are rejected.
+  # Only HELD / FAILED / PENDING orders can be resent. AWAITING_PAYMENT is
+  # excluded because respect_hold:false does not bypass the payment gate (it
+  # would silently re-hold); SUBMITTED / SHIPPED / CANCELLED are terminal.
   def resend
     order = current_company.shipstation_orders.find_by(id: params[:id])
     return render json: { error: "Not found" }, status: :not_found unless order
 
-    unless order.sendable?
+    unless order.resendable?
       return render json: { error: "Order is #{order.status} and cannot be resent" }, status: :unprocessable_entity
     end
 
@@ -55,7 +56,7 @@ private
       carrier: order.carrier,
       last_error: order.last_error,
       hold_until: order.hold_until,
-      resendable: order.sendable?,
+      resendable: order.resendable?,
       created_at: order.created_at,
     }
   end

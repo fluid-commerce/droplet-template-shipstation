@@ -73,6 +73,34 @@ describe ShipstationOrder do
     _(order).must_be :valid?
   end
 
+  it "accepts the CANCELLED status" do
+    order = ShipstationOrder.new(company: companies(:acme), fluid_order_id: 7002,
+      fluid_order_number: "C-1", status: "CANCELLED")
+    _(order).must_be :valid?
+  end
+
+  it "enforces a unique (company, fluid_order_id) pair" do
+    ShipstationOrder.create!(company: companies(:acme), fluid_order_id: 7003,
+      fluid_order_number: "U-1", status: "PENDING")
+    dup = ShipstationOrder.new(company: companies(:acme), fluid_order_id: 7003,
+      fluid_order_number: "U-2", status: "PENDING")
+    _(-> { dup.save!(validate: false) }).must_raise ActiveRecord::RecordNotUnique
+  end
+
+  describe "#resendable?" do
+    it "is true for HELD, FAILED, PENDING" do
+      %w[HELD FAILED PENDING].each do |s|
+        _(ShipstationOrder.new(status: s).resendable?).must_equal true
+      end
+    end
+
+    it "is false for AWAITING_PAYMENT, SUBMITTED, SHIPPED, CANCELLED" do
+      %w[AWAITING_PAYMENT SUBMITTED SHIPPED CANCELLED].each do |s|
+        _(ShipstationOrder.new(status: s).resendable?).must_equal false
+      end
+    end
+  end
+
   describe "#sendable?" do
     it "returns true for FAILED orders" do
       _(shipstation_orders(:failed_order)).must_be :sendable?

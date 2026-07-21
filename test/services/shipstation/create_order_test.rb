@@ -8,6 +8,13 @@ class FakeOrdersService
   end
 end
 
+# Simulates a Fluid external-id sync failure (must not fail the order).
+class RaisingOrdersService
+  def update_external_id(*, **)
+    raise "fluid timeout"
+  end
+end
+
 class Shipstation::CreateOrderTest < ActiveSupport::TestCase
   fixtures :companies
 
@@ -164,5 +171,70 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
     run_tracking_http(order_params(status: "awaiting_payment"))
     _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "AWAITING_PAYMENT"
+  end
+
+  # -- hardening (review follow-ups) ---------------------------------------
+
+  test "refreshes stored payload on reprocess so a paid held order ships" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
+    # Held while awaiting payment.
+    run_tracking_http(order_params(status: "awaiting_payment"))
+    order = @company.shipstation_orders.find_by(fluid_order_id: 555)
+    _(order.status).must_equal "AWAITING_PAYMENT"
+
+    # order.updated arrives paid -> batch-held, payload refreshed.
+    run_tracking_http(order_params(status: "awaiting_shipment"))
+    order.reload
+    _(order.status).must_equal "HELD"
+    _(order.request_payload["status"]).must_equal "awaiting_shipment"
+
+    # Release uses the refreshed payload and actually submits.
+    posted = false
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; { "orderId" => 42 } }) do
+      FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
+        payload = { "order" => order.request_payload, "company_id" => @company.fluid_company_id }
+        Shipstation::CreateOrder.new(payload, respect_hold: false).call
+      end
+    end
+    _(posted).must_equal true
+    _(order.reload.status).must_equal "SUBMITTED"
+  end
+
+  test "a Fluid external-id sync failure does not fail or re-mark the order" do
+    posted = 0
+    HTTParty.stub(:post, ->(*_a, **_k) { posted += 1; { "orderId" => 42 } }) do
+      FluidApi::V2::OrdersService.stub(:new, RaisingOrdersService.new) do
+        Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment")).call
+      end
+    end
+    _(posted).must_equal 1
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "SUBMITTED"
+  end
+
+  test "marks an existing pre-submit order CANCELLED when Fluid reports it unfulfillable" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
+    run_tracking_http(order_params(status: "awaiting_shipment")) # HELD
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "HELD"
+
+    run_tracking_http(order_params(status: "cancelled"))
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "CANCELLED"
+  end
+
+  test "preserves the original hold_until across repeated updates" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
+    run_tracking_http(order_params(status: "awaiting_shipment"))
+    first = @company.shipstation_orders.find_by(fluid_order_id: 555).hold_until
+    _(first).wont_be_nil
+
+    run_tracking_http(order_params(status: "awaiting_shipment"))
+    second = @company.shipstation_orders.find_by(fluid_order_id: 555).hold_until
+    _(second.to_i).must_equal first.to_i
+  end
+
+  test "records the seen shipping method even when the order is held for batch" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
+    run_tracking_http(order_params(status: "awaiting_shipment", metadata: { "shipping" => { "title" => "Overnight" } }))
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "HELD"
+    _(@company.seen_shipping_methods.find_by(fluid_shipping_title: "Overnight")).wont_be_nil
   end
 end

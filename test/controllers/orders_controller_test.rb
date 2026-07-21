@@ -69,4 +69,16 @@ describe OrdersController do
     post resend_order_url(order, dri: dri), headers: xhr
     must_respond_with :not_found
   end
+
+  it "does not offer or allow resending an AWAITING_PAYMENT order" do
+    order = company.shipstation_orders.create!(
+      fluid_order_id: 706, fluid_order_number: "A-706", status: "AWAITING_PAYMENT",
+    )
+    get orders_url(dri: dri), headers: xhr
+    row = JSON.parse(response.body)["orders"].find { |o| o["id"] == order.id }
+    _(row["resendable"]).must_equal false
+
+    post resend_order_url(order, dri: dri), headers: xhr
+    must_respond_with :unprocessable_entity
+  end
 end
