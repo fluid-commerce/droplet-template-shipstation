@@ -23,6 +23,13 @@ Rails.application.routes.draw do
 
   resources :shipping_method_mappings, only: %i[index create destroy]
 
+  controller :shipping_catalog do
+    get "shipping_catalog/carriers"
+    get "shipping_catalog/services"
+    get "shipping_catalog/packages"
+    get "shipping_catalog/fluid_methods"
+  end
+
   resources :orders, only: %i[index] do
     post :resend, on: :member
   end
