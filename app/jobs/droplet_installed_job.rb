@@ -37,7 +37,7 @@ class DropletInstalledJob < WebhookEventJob
     end
 
     register_active_callbacks(company)
-    create_order_created_webhook(company)
+    create_order_webhooks(company)
   end
 
 private
@@ -76,14 +76,17 @@ private
     end
   end
 
-  def create_order_created_webhook(company)
+  def create_order_webhooks(company)
     client = FluidClient.new(company.authentication_token)
 
+    # order.created feeds new orders in; order.updated releases orders that were
+    # held (AWAITING_PAYMENT) once they become fulfillable.
     client.webhooks.create(resource: "order", event: "created", auth_token: company.authentication_token)
+    client.webhooks.create(resource: "order", event: "updated", auth_token: company.authentication_token)
   rescue StandardError => e
-    # Registering the order webhook is best-effort: a failure here must not
+    # Registering the order webhooks is best-effort: a failure here must not
     # roll back the surrounding install transaction (and thus the company
     # record). Log and move on; registration can be reconciled later.
-    Rails.logger.error("[DropletInstalledJob] Failed to create order created webhook: #{e.class}: #{e.message}")
+    Rails.logger.error("[DropletInstalledJob] Failed to create order webhooks: #{e.class}: #{e.message}")
   end
 end

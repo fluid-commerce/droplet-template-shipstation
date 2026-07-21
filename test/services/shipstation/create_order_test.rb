@@ -16,18 +16,17 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     @company.create_integration_setting!(settings: { "api_key" => "k", "api_secret" => "s" })
   end
 
-  def order_params(metadata: {})
-    {
-      "company_id" => @company.fluid_company_id,
-      "order" => {
-        "id" => 555,
-        "order_number" => "ORD-555",
-        "email" => "a@b.com",
-        "items" => [],
-        "ship_to" => { "name" => "X" },
-        "metadata" => metadata,
-      },
+  def order_params(metadata: {}, status: nil, id: 555, order_number: "ORD-555")
+    order = {
+      "id" => id,
+      "order_number" => order_number,
+      "email" => "a@b.com",
+      "items" => [],
+      "ship_to" => { "name" => "X" },
+      "metadata" => metadata,
     }
+    order["status"] = status if status
+    { "company_id" => @company.fluid_company_id, "order" => order }
   end
 
   def run_with_captured_body(params)
@@ -38,6 +37,17 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
       end
     end
     captured
+  end
+
+  # Runs #call and reports whether an HTTP POST to ShipStation was attempted.
+  def run_tracking_http(params)
+    posted = false
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; { "orderId" => 42 } }) do
+      FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
+        Shipstation::CreateOrder.new(params).call
+      end
+    end
+    posted
   end
 
   test "injects mapped carrier/service/package codes and the requested service" do
@@ -75,5 +85,47 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     body = run_with_captured_body(order_params)
     _(body.key?("requestedShippingService")).must_equal false
     _(body.key?("carrierCode")).must_equal false
+  end
+
+  # -- status gating / payment hold ----------------------------------------
+
+  test "submits when status is awaiting_shipment" do
+    posted = run_tracking_http(order_params(status: "awaiting_shipment"))
+    _(posted).must_equal true
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "SUBMITTED"
+  end
+
+  test "submits when status is blank" do
+    _(run_tracking_http(order_params)).must_equal true
+  end
+
+  test "holds an awaiting_payment order without sending" do
+    posted = run_tracking_http(order_params(status: "awaiting_payment"))
+    _(posted).must_equal false
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "AWAITING_PAYMENT"
+  end
+
+  test "skips an unfulfillable status without creating a record or sending" do
+    posted = run_tracking_http(order_params(status: "cancelled"))
+    _(posted).must_equal false
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555)).must_be_nil
+  end
+
+  test "does not resubmit an order already SUBMITTED" do
+    @company.shipstation_orders.create!(fluid_order_id: 555, fluid_order_number: "ORD-555", status: "SUBMITTED")
+    posted = run_tracking_http(order_params(status: "awaiting_shipment"))
+    _(posted).must_equal false
+  end
+
+  test "releases a held order when it becomes fulfillable" do
+    # First: held as awaiting_payment.
+    run_tracking_http(order_params(status: "awaiting_payment"))
+    held = @company.shipstation_orders.find_by(fluid_order_id: 555)
+    _(held.status).must_equal "AWAITING_PAYMENT"
+
+    # Then: order.updated arrives fulfillable -> submitted.
+    posted = run_tracking_http(order_params(status: "awaiting_shipment"))
+    _(posted).must_equal true
+    _(held.reload.status).must_equal "SUBMITTED"
   end
 end

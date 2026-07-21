@@ -4,6 +4,14 @@ module Shipstation
   class CreateOrder < BaseService
     attr_reader :params, :api_key, :api_secret, :company_name, :company
 
+    # Fluid order statuses that are ready to ship. A blank status is treated as
+    # fulfillable (older payloads omit it). Anything else that is not awaiting
+    # payment is skipped entirely (e.g. cancelled/refunded).
+    FULFILLABLE_STATUSES = %w[awaiting_shipment].freeze
+    AWAITING_PAYMENT_STATUS = "awaiting_payment"
+    # Statuses that mean the order is already in ShipStation — never resend.
+    SUBMITTED_STATUSES = %w[SUBMITTED SHIPPED].freeze
+
     def initialize(order_params)
       @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]
@@ -18,9 +26,47 @@ module Shipstation
     end
 
     def call
+      # Orders that are neither fulfillable nor awaiting payment (cancelled,
+      # refunded, …) are not sent to ShipStation and not tracked locally.
+      if unfulfillable_status?
+        Rails.logger.info("[CreateOrder] skipping order #{params[:order_number]} with status #{order_status.inspect}")
+        return Result.new(true, { skipped: "status=#{order_status}" }, nil)
+      end
+
       # Create local order record for tracking
       ss_order = find_or_create_local_order
 
+      # Idempotency: never resubmit an order already sent to ShipStation. This
+      # also makes order.updated safe to fire repeatedly.
+      if SUBMITTED_STATUSES.include?(ss_order.status)
+        return Result.new(true, { skipped: "already #{ss_order.status}" }, nil)
+      end
+
+      # Hold unpaid orders instead of sending. An order.updated webhook releases
+      # them (calls this service again) once the status becomes fulfillable.
+      if awaiting_payment?
+        ss_order.update!(status: "AWAITING_PAYMENT", last_error: nil, last_error_at: nil)
+        Rails.logger.info("[CreateOrder] holding order #{params[:order_number]} as AWAITING_PAYMENT")
+        return Result.new(true, { held: true }, nil)
+      end
+
+      submit_to_shipstation(ss_order)
+    rescue StandardError => e
+      # Update local record on failure (if it exists)
+      if defined?(ss_order) && ss_order&.persisted?
+        ss_order.update(
+          status: "FAILED",
+          last_error: e.message,
+          last_error_at: Time.current,
+          retry_count: ss_order.retry_count + 1,
+        )
+      end
+      raise
+    end
+
+  private
+
+    def submit_to_shipstation(ss_order)
       order_response = create_order_in_shipstation
       shipstation_order_id = order_response["orderId"]
 
@@ -46,20 +92,21 @@ module Shipstation
       fluid_service.update_external_id(id: params[:id], external_id: shipstation_order_id)
 
       Result.new(true, { shipstation_order_id: shipstation_order_id }, nil)
-    rescue StandardError => e
-      # Update local record on failure (if it exists)
-      if defined?(ss_order) && ss_order&.persisted?
-        ss_order.update(
-          status: "FAILED",
-          last_error: e.message,
-          last_error_at: Time.current,
-          retry_count: ss_order.retry_count + 1,
-        )
-      end
-      raise
     end
 
-  private
+    def order_status
+      params[:status].to_s
+    end
+
+    def unfulfillable_status?
+      order_status.present? &&
+        !FULFILLABLE_STATUSES.include?(order_status) &&
+        order_status != AWAITING_PAYMENT_STATUS
+    end
+
+    def awaiting_payment?
+      order_status == AWAITING_PAYMENT_STATUS
+    end
 
     def find_or_create_local_order
       ShipstationOrder.find_or_create_by!(

@@ -17,6 +17,7 @@ class ShipstationOrder < ApplicationRecord
   }
 
   scope :failed, -> { where(status: "FAILED") }
+  scope :awaiting_payment, -> { where(status: "AWAITING_PAYMENT") }
 
   def sendable?
     SENDABLE_STATUSES.include?(status)
