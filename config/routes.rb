@@ -21,5 +21,7 @@ Rails.application.routes.draw do
     post :test_connection, on: :collection
   end
 
+  resources :shipping_method_mappings, only: %i[index create destroy]
+
   get "up" => "rails/health#show", as: :rails_health_check
 end

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import ConfigurationForm from "../components/ConfigurationForm";
+import ShippingMethods from "../components/ShippingMethods";
 
 interface FluidProps {
   dri: string;
@@ -70,6 +71,12 @@ const Fluid = ({ dri, apiKey, apiSecret }: FluidProps) => {
       label: 'Configuration',
       component: ConfigurationForm,
       props: { dri, apiKey, apiSecret }
+    },
+    {
+      id: 'shipping-methods',
+      label: 'Shipping Methods',
+      component: ShippingMethods,
+      props: { dri }
     }
   ];
 
