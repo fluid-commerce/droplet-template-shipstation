@@ -17,3 +17,7 @@ production:
     class: SyncTrackingJob
     queue: default
     schedule: every 30 minutes
+  release_held_orders:
+    class: ReleaseHeldOrdersJob
+    queue: default
+    schedule: every 5 minutes

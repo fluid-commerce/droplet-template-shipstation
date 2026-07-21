@@ -51,6 +51,26 @@ describe ShipstationOrder do
       _(results).must_include shipstation_orders(:failed_order)
       _(results).wont_include shipstation_orders(:shipped_unsynced)
     end
+
+    it "releasable_for_batch returns only due HELD orders" do
+      due = ShipstationOrder.create!(company: companies(:acme), fluid_order_id: 8001,
+        fluid_order_number: "B-1", status: "HELD", hold_until: 1.minute.ago)
+      future = ShipstationOrder.create!(company: companies(:acme), fluid_order_id: 8002,
+        fluid_order_number: "B-2", status: "HELD", hold_until: 1.hour.from_now)
+      manual = ShipstationOrder.create!(company: companies(:acme), fluid_order_id: 8003,
+        fluid_order_number: "B-3", status: "HELD", hold_until: nil)
+
+      results = ShipstationOrder.releasable_for_batch
+      _(results).must_include due
+      _(results).wont_include future
+      _(results).wont_include manual
+    end
+  end
+
+  it "accepts the HELD status" do
+    order = ShipstationOrder.new(company: companies(:acme), fluid_order_id: 7001,
+      fluid_order_number: "H-1", status: "HELD")
+    _(order).must_be :valid?
   end
 
   describe "#sendable?" do

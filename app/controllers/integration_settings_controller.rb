@@ -13,6 +13,7 @@ class IntegrationSettingsController < ApplicationController
       api_key: integration_setting_params[:api_key],
       api_secret: integration_setting_params[:api_secret],
     }
+    apply_batching_settings(integration_setting)
 
     integration_setting.save!
 
@@ -38,7 +39,22 @@ private
     render json: { error: "Unauthorized" }, status: :unauthorized
   end
 
+  # Persists batching config only when the client sent those fields, so a
+  # credentials-only save doesn't reset a company's batching preferences.
+  def apply_batching_settings(integration_setting)
+    if integration_setting_params.key?(:hold_for_batch)
+      integration_setting.hold_for_batch =
+        ActiveModel::Type::Boolean.new.cast(integration_setting_params[:hold_for_batch])
+    end
+
+    if integration_setting_params.key?(:batch_window_minutes)
+      value = integration_setting_params[:batch_window_minutes].presence
+      integration_setting.batch_window_minutes = value && value.to_i
+    end
+  end
+
   def integration_setting_params
-    params.require(:integration_setting).permit(:api_key, :api_secret)
+    params.require(:integration_setting)
+      .permit(:api_key, :api_secret, :hold_for_batch, :batch_window_minutes)
   end
 end

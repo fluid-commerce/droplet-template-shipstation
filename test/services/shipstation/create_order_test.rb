@@ -128,4 +128,41 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     _(posted).must_equal true
     _(held.reload.status).must_equal "SUBMITTED"
   end
+
+  # -- batching hold --------------------------------------------------------
+
+  test "holds a fulfillable order for batching (window sets hold_until)" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
+    posted = run_tracking_http(order_params(status: "awaiting_shipment"))
+    _(posted).must_equal false
+    order = @company.shipstation_orders.find_by(fluid_order_id: 555)
+    _(order.status).must_equal "HELD"
+    _(order.hold_until).wont_be_nil
+  end
+
+  test "holds for batching with no window leaves hold_until nil (manual release)" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: nil)
+    run_tracking_http(order_params(status: "awaiting_shipment"))
+    order = @company.shipstation_orders.find_by(fluid_order_id: 555)
+    _(order.status).must_equal "HELD"
+    _(order.hold_until).must_be_nil
+  end
+
+  test "respect_hold false bypasses batching and submits immediately" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
+    posted = false
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; { "orderId" => 42 } }) do
+      FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
+        Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment"), respect_hold: false).call
+      end
+    end
+    _(posted).must_equal true
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "SUBMITTED"
+  end
+
+  test "awaiting_payment takes precedence over the batching hold" do
+    @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
+    run_tracking_http(order_params(status: "awaiting_payment"))
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "AWAITING_PAYMENT"
+  end
 end

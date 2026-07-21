@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_21_000002) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_21_000003) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -67,6 +67,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_21_000002) do
     t.jsonb "credentials", default: {}
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "hold_for_batch", default: false, null: false
+    t.integer "batch_window_minutes"
     t.index ["company_id"], name: "index_integration_settings_on_company_id"
   end
 
@@ -125,10 +127,12 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_21_000002) do
     t.jsonb "response_payload", default: {}
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "hold_until"
     t.index ["company_id"], name: "index_shipstation_orders_on_company_id"
     t.index ["fluid_order_id"], name: "index_shipstation_orders_on_fluid_order_id"
     t.index ["fluid_order_number"], name: "index_shipstation_orders_on_fluid_order_number"
     t.index ["shipstation_order_id"], name: "index_shipstation_orders_on_shipstation_order_id"
+    t.index ["status", "hold_until"], name: "index_ss_orders_on_status_and_hold_until"
     t.index ["status", "tracking_synced_to_fluid"], name: "index_ss_orders_on_status_and_sync"
     t.index ["status"], name: "index_shipstation_orders_on_status"
   end

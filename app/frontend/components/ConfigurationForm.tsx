@@ -6,6 +6,8 @@ interface ConfigurationFormProps {
   dri: string;
   apiKey: string;
   apiSecret: string;
+  holdForBatch: boolean;
+  batchWindowMinutes: string;
 }
 
 type ConnectionStatus = 'default' | 'connecting' | 'connected' | 'error';
@@ -18,8 +20,9 @@ const jsonHeaders = (): HeadersInit => ({
   'X-Requested-With': 'XMLHttpRequest',
 });
 
-const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiSecret }) => {
+const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('default');
+  const [batchEnabled, setBatchEnabled] = useState<boolean>(holdForBatch);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -29,6 +32,8 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiS
       integration_setting: {
         api_key: formData.get('apiKey'),
         api_secret: formData.get('apiSecret'),
+        hold_for_batch: batchEnabled,
+        batch_window_minutes: formData.get('batchWindowMinutes') || '',
       }
     };
 
@@ -106,6 +111,44 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiS
                 defaultValue={apiSecret}
               />
             </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg p-6 border border-gray-200">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Order Batching</h2>
+            <p className="text-sm text-gray-600">
+              Hold new orders instead of sending them to ShipStation immediately. Held orders are
+              released automatically after the batch window, or manually.
+            </p>
+          </div>
+
+          <label className="flex items-center gap-2 mb-4">
+            <input
+              type="checkbox"
+              checked={batchEnabled}
+              onChange={(e) => setBatchEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            <span className="text-sm font-medium text-gray-700">Hold orders for batching</span>
+          </label>
+
+          <div className="max-w-xs">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Batch window (minutes)
+            </label>
+            <TextInput
+              type="number"
+              name="batchWindowMinutes"
+              placeholder="Leave blank for manual release only"
+              min="0"
+              defaultValue={batchWindowMinutes}
+              disabled={!batchEnabled}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Blank = hold until released manually. Otherwise orders auto-release this many minutes
+              after they arrive.
+            </p>
           </div>
         </div>
 

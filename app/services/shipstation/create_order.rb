@@ -12,17 +12,21 @@ module Shipstation
     # Statuses that mean the order is already in ShipStation — never resend.
     SUBMITTED_STATUSES = %w[SUBMITTED SHIPPED].freeze
 
-    def initialize(order_params)
+    # respect_hold: when false, the per-company batching hold is bypassed so the
+    # order is submitted immediately. Used by the batch-release job and manual
+    # force-send, which have already decided the order should go out now.
+    def initialize(order_params, respect_hold: true)
       @params = order_params["order"].deep_symbolize_keys
       @company_id = order_params["company_id"]
       @company = Company.find_by(fluid_company_id: @company_id)
       @company_name = company&.name
+      @respect_hold = respect_hold
 
-      integration_setting = IntegrationSetting.find_by(company_id: company.id)
-      raise "Integration settings not found for company: #{company.id}" unless integration_setting
+      @integration_setting = IntegrationSetting.find_by(company_id: company.id)
+      raise "Integration settings not found for company: #{company.id}" unless @integration_setting
 
-      @api_key = integration_setting.settings["api_key"]
-      @api_secret = integration_setting.settings["api_secret"]
+      @api_key = @integration_setting.settings["api_key"]
+      @api_secret = @integration_setting.settings["api_secret"]
     end
 
     def call
@@ -48,6 +52,16 @@ module Shipstation
         ss_order.update!(status: "AWAITING_PAYMENT", last_error: nil, last_error_at: nil)
         Rails.logger.info("[CreateOrder] holding order #{params[:order_number]} as AWAITING_PAYMENT")
         return Result.new(true, { held: true }, nil)
+      end
+
+      # Batching: when the company holds orders for batching, park the order as
+      # HELD instead of submitting. ReleaseHeldOrdersJob (or a manual force-send)
+      # flushes it later with respect_hold: false.
+      if @respect_hold && batching_enabled?
+        release_at = batch_release_at
+        ss_order.update!(status: "HELD", hold_until: release_at, last_error: nil, last_error_at: nil)
+        Rails.logger.info("[CreateOrder] batch-holding #{params[:order_number]} (release: #{release_at || 'manual'})")
+        return Result.new(true, { held_for_batch: true }, nil)
       end
 
       submit_to_shipstation(ss_order)
@@ -106,6 +120,17 @@ module Shipstation
 
     def awaiting_payment?
       order_status == AWAITING_PAYMENT_STATUS
+    end
+
+    def batching_enabled?
+      @integration_setting.hold_for_batch
+    end
+
+    # When a batch window is configured, hold until now + window; otherwise hold
+    # indefinitely (nil) for manual release.
+    def batch_release_at
+      minutes = @integration_setting.batch_window_minutes
+      minutes.present? && minutes.positive? ? minutes.to_i.minutes.from_now : nil
     end
 
     def find_or_create_local_order
