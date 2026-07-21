@@ -23,5 +23,9 @@ Rails.application.routes.draw do
 
   resources :shipping_method_mappings, only: %i[index create destroy]
 
+  resources :orders, only: %i[index] do
+    post :resend, on: :member
+  end
+
   get "up" => "rails/health#show", as: :rails_health_check
 end

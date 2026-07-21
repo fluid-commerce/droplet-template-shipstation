@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import ConfigurationForm from "../components/ConfigurationForm";
 import ShippingMethods from "../components/ShippingMethods";
+import Activity from "../components/Activity";
 
 interface FluidProps {
   dri: string;
@@ -78,6 +79,12 @@ const Fluid = ({ dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes }: Flu
       id: 'shipping-methods',
       label: 'Shipping Methods',
       component: ShippingMethods,
+      props: { dri }
+    },
+    {
+      id: 'activity',
+      label: 'Activity',
+      component: Activity,
       props: { dri }
     }
   ];
