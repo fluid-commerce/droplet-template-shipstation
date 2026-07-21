@@ -30,41 +30,29 @@ module Shipstation
     end
 
     def call
+      # Record the shipping method at intake (before any hold) so the admin can
+      # map methods on held/unpaid orders, not just shipped ones.
+      record_seen_shipping_method
+
       # Orders that are neither fulfillable nor awaiting payment (cancelled,
-      # refunded, …) are not sent to ShipStation and not tracked locally.
+      # refunded, …) are not sent to ShipStation. If we were already tracking the
+      # order (e.g. it was HELD and then cancelled in Fluid), mark it CANCELLED so
+      # a later release doesn't ship it from a stale payload.
       if unfulfillable_status?
-        Rails.logger.info("[CreateOrder] skipping order #{params[:order_number]} with status #{order_status.inspect}")
+        cancel_existing_pre_submit_record
+        Rails.logger.warn("[CreateOrder] skipping #{params[:order_number]} with status #{order_status.inspect}")
         return Result.new(true, { skipped: "status=#{order_status}" }, nil)
       end
 
-      # Create local order record for tracking
       ss_order = find_or_create_local_order
 
-      # Idempotency: never resubmit an order already sent to ShipStation. This
-      # also makes order.updated safe to fire repeatedly.
-      if SUBMITTED_STATUSES.include?(ss_order.status)
-        return Result.new(true, { skipped: "already #{ss_order.status}" }, nil)
+      # Serialize all decisions/writes for this one order so concurrent
+      # order.created / order.updated / release-job invocations can't double-send.
+      result = nil
+      ss_order.with_lock do
+        result = decide_and_process(ss_order)
       end
-
-      # Hold unpaid orders instead of sending. An order.updated webhook releases
-      # them (calls this service again) once the status becomes fulfillable.
-      if awaiting_payment?
-        ss_order.update!(status: "AWAITING_PAYMENT", last_error: nil, last_error_at: nil)
-        Rails.logger.info("[CreateOrder] holding order #{params[:order_number]} as AWAITING_PAYMENT")
-        return Result.new(true, { held: true }, nil)
-      end
-
-      # Batching: when the company holds orders for batching, park the order as
-      # HELD instead of submitting. ReleaseHeldOrdersJob (or a manual force-send)
-      # flushes it later with respect_hold: false.
-      if @respect_hold && batching_enabled?
-        release_at = batch_release_at
-        ss_order.update!(status: "HELD", hold_until: release_at, last_error: nil, last_error_at: nil)
-        Rails.logger.info("[CreateOrder] batch-holding #{params[:order_number]} (release: #{release_at || 'manual'})")
-        return Result.new(true, { held_for_batch: true }, nil)
-      end
-
-      submit_to_shipstation(ss_order)
+      result
     rescue StandardError => e
       # Update local record on failure (if it exists)
       if defined?(ss_order) && ss_order&.persisted?
@@ -80,6 +68,44 @@ module Shipstation
 
   private
 
+    def decide_and_process(ss_order)
+      # Idempotency: never resubmit an order already sent to ShipStation. This
+      # also makes order.updated / repeated releases safe.
+      if SUBMITTED_STATUSES.include?(ss_order.status)
+        return Result.new(true, { skipped: "already #{ss_order.status}" }, nil)
+      end
+
+      # Hold unpaid orders instead of sending. An order.updated webhook releases
+      # them (calls this service again) once the status becomes fulfillable.
+      if awaiting_payment?
+        ss_order.update!(status: "AWAITING_PAYMENT", last_error: nil, last_error_at: nil)
+        Rails.logger.info("[CreateOrder] holding #{params[:order_number]} as AWAITING_PAYMENT")
+        return Result.new(true, { held: true }, nil)
+      end
+
+      # Batching: park the order as HELD instead of submitting.
+      # ReleaseHeldOrdersJob (or a manual force-send) flushes it later.
+      if @respect_hold && batching_enabled?
+        hold_for_batch(ss_order)
+        return Result.new(true, { held_for_batch: true }, nil)
+      end
+
+      submit_to_shipstation(ss_order)
+    end
+
+    def hold_for_batch(ss_order)
+      # Preserve an already-established batch deadline so repeated order.updated
+      # events can't postpone the release indefinitely.
+      release_at =
+        if ss_order.status == "HELD" && ss_order.hold_until.present?
+          ss_order.hold_until
+        else
+          batch_release_at
+        end
+      ss_order.update!(status: "HELD", hold_until: release_at, last_error: nil, last_error_at: nil)
+      Rails.logger.info("[CreateOrder] batch-holding #{params[:order_number]} (release: #{release_at || 'manual'})")
+    end
+
     def submit_to_shipstation(ss_order)
       order_response = create_order_in_shipstation
       shipstation_order_id = order_response["orderId"]
@@ -94,18 +120,44 @@ module Shipstation
         raise "Failed to create order in ShipStation: no orderId returned"
       end
 
-      # Update local record with ShipStation response
-      ss_order.update!(
-        status: "SUBMITTED",
-        shipstation_order_id: shipstation_order_id.to_s,
-        response_payload: order_response,
-      )
+      # A concurrent shipment webhook may have already advanced this to SHIPPED;
+      # don't regress a terminal status.
+      unless ss_order.status == "SHIPPED"
+        ss_order.update!(
+          status: "SUBMITTED",
+          shipstation_order_id: shipstation_order_id.to_s,
+          response_payload: order_response,
+        )
+      end
 
-      # Update Fluid with external ID using the droplet install token
-      fluid_service = FluidApi::V2::OrdersService.new(company.authentication_token)
-      fluid_service.update_external_id(id: params[:id], external_id: shipstation_order_id)
+      sync_external_id_to_fluid(shipstation_order_id)
 
       Result.new(true, { shipstation_order_id: shipstation_order_id }, nil)
+    end
+
+    # Best-effort: the order is already in ShipStation, so a Fluid sync failure
+    # must not raise (which would mark the order FAILED and re-submit it).
+    def sync_external_id_to_fluid(shipstation_order_id)
+      FluidApi::V2::OrdersService.new(company.authentication_token)
+        .update_external_id(id: params[:id], external_id: shipstation_order_id)
+    rescue StandardError => e
+      Rails.logger.error("[CreateOrder] external id sync failed for #{params[:order_number]}: #{e.message}")
+    end
+
+    def record_seen_shipping_method
+      return if shipping_title.blank?
+
+      SeenShippingMethod.record!(company: company, title: shipping_title, order_number: params[:order_number])
+    end
+
+    # Marks a pre-submit local record CANCELLED when Fluid reports the order is no
+    # longer fulfillable, so it is excluded from batch release / resend.
+    def cancel_existing_pre_submit_record
+      order = company.shipstation_orders.find_by(fluid_order_id: params[:id])
+      return unless order
+      return if SUBMITTED_STATUSES.include?(order.status) || order.status == "CANCELLED"
+
+      order.update!(status: "CANCELLED", last_error: "Fluid order status: #{order_status}")
     end
 
     def order_status
@@ -134,14 +186,24 @@ module Shipstation
     end
 
     def find_or_create_local_order
-      ShipstationOrder.find_or_create_by!(
+      order = ShipstationOrder.find_or_create_by!(
         company: company,
         fluid_order_id: params[:id],
-      ) do |order|
-        order.fluid_order_number = params[:order_number]
-        order.status = "PENDING"
-        order.request_payload = params
+      ) do |o|
+        o.fluid_order_number = params[:order_number]
+        o.status = "PENDING"
+        o.request_payload = params
       end
+
+      # Refresh the stored payload on existing pre-submit records so a later
+      # release/resend uses the latest order data and status (e.g. an order held
+      # while awaiting_payment must ship from the updated awaiting_shipment
+      # payload, not the stale one it was first stored with).
+      unless SUBMITTED_STATUSES.include?(order.status)
+        order.update!(request_payload: params, fluid_order_number: params[:order_number])
+      end
+
+      order
     end
 
     def create_order_in_shipstation
@@ -176,8 +238,6 @@ module Shipstation
     def shipping_service_fields
       title = shipping_title
       return {} if title.blank?
-
-      SeenShippingMethod.record!(company: company, title: title, order_number: params[:order_number])
 
       fields = { requestedShippingService: title }
       mapping = company.shipping_method_mappings.find_by(fluid_shipping_title: title)

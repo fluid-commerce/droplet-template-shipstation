@@ -3,8 +3,12 @@
 class ShipstationOrder < ApplicationRecord
   belongs_to :company
 
-  STATUSES = %w[PENDING SUBMITTED SHIPPED FAILED AWAITING_PAYMENT HELD].freeze
+  STATUSES = %w[PENDING SUBMITTED SHIPPED FAILED AWAITING_PAYMENT HELD CANCELLED].freeze
   SENDABLE_STATUSES = %w[FAILED AWAITING_PAYMENT PENDING HELD].freeze
+  # Statuses an admin can manually resend from the Activity tab. Excludes
+  # AWAITING_PAYMENT (respect_hold:false doesn't bypass the payment gate, so a
+  # resend would silently re-hold) and terminal CANCELLED/SUBMITTED/SHIPPED.
+  RESENDABLE_STATUSES = %w[FAILED PENDING HELD].freeze
 
   validates :fluid_order_id, presence: true
   validates :fluid_order_number, presence: true
@@ -29,5 +33,9 @@ class ShipstationOrder < ApplicationRecord
 
   def sendable?
     SENDABLE_STATUSES.include?(status)
+  end
+
+  def resendable?
+    RESENDABLE_STATUSES.include?(status)
   end
 end
