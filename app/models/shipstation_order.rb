@@ -3,8 +3,8 @@
 class ShipstationOrder < ApplicationRecord
   belongs_to :company
 
-  STATUSES = %w[PENDING SUBMITTED SHIPPED FAILED AWAITING_PAYMENT].freeze
-  SENDABLE_STATUSES = %w[FAILED AWAITING_PAYMENT PENDING].freeze
+  STATUSES = %w[PENDING SUBMITTED SHIPPED FAILED AWAITING_PAYMENT HELD].freeze
+  SENDABLE_STATUSES = %w[FAILED AWAITING_PAYMENT PENDING HELD].freeze
 
   validates :fluid_order_id, presence: true
   validates :fluid_order_number, presence: true
@@ -18,6 +18,14 @@ class ShipstationOrder < ApplicationRecord
 
   scope :failed, -> { where(status: "FAILED") }
   scope :awaiting_payment, -> { where(status: "AWAITING_PAYMENT") }
+  scope :held, -> { where(status: "HELD") }
+
+  # HELD orders whose batch window has elapsed and are due to be flushed. Orders
+  # held with no hold_until (manual-release batching) are excluded — they wait
+  # for an explicit release.
+  scope :releasable_for_batch, -> {
+    held.where.not(hold_until: nil).where(hold_until: ..Time.current)
+  }
 
   def sendable?
     SENDABLE_STATUSES.include?(status)

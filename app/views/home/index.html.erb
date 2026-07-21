@@ -5,5 +5,7 @@
 <div id="root"
      data-dri="<%= @dri %>"
      data-api-key="<%= @integration_settings&.settings&.dig('api_key') %>"
-     data-api-secret="<%= @integration_settings&.settings&.dig('api_secret') %>">
+     data-api-secret="<%= @integration_settings&.settings&.dig('api_secret') %>"
+     data-hold-for-batch="<%= @integration_settings&.hold_for_batch ? 'true' : 'false' %>"
+     data-batch-window-minutes="<%= @integration_settings&.batch_window_minutes %>">
 </div>

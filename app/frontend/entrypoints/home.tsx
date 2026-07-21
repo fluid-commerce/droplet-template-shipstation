@@ -7,6 +7,8 @@ interface FluidProps {
   dri: string;
   apiKey: string;
   apiSecret: string;
+  holdForBatch: boolean;
+  batchWindowMinutes: string;
 }
 
 // Interfaces
@@ -64,13 +66,13 @@ const TabContent: React.FC<TabContentProps> = ({ tabs, activeTab }) => {
   return <Component {...activeTabData.props} />;
 };
 
-const Fluid = ({ dri, apiKey, apiSecret }: FluidProps) => {
+const Fluid = ({ dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes }: FluidProps) => {
   const tabs: TabItem[] = [
     {
       id: 'configuration',
       label: 'Configuration',
       component: ConfigurationForm,
-      props: { dri, apiKey, apiSecret }
+      props: { dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes }
     },
     {
       id: 'shipping-methods',
@@ -97,5 +99,15 @@ const rootElement = document.getElementById('root') as HTMLElement;
 const dri = rootElement.dataset.dri || '';
 const apiKey = rootElement.dataset.apiKey || '';
 const apiSecret = rootElement.dataset.apiSecret || '';
+const holdForBatch = rootElement.dataset.holdForBatch === 'true';
+const batchWindowMinutes = rootElement.dataset.batchWindowMinutes || '';
 
-root.render(<Fluid dri={dri} apiKey={apiKey} apiSecret={apiSecret} />);
+root.render(
+  <Fluid
+    dri={dri}
+    apiKey={apiKey}
+    apiSecret={apiSecret}
+    holdForBatch={holdForBatch}
+    batchWindowMinutes={batchWindowMinutes}
+  />
+);
