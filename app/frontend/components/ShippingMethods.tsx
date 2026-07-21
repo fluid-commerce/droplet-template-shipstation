@@ -21,6 +21,11 @@ interface Unmapped {
   example_order_number: string | null;
 }
 
+interface CodeName {
+  code: string;
+  name: string;
+}
+
 // The DRI authenticates and scopes the request server-side; X-Requested-With
 // guards against cross-origin form posts (Rails CSRF token verification is
 // skipped on these endpoints).
@@ -44,6 +49,12 @@ const ShippingMethods: React.FC<ShippingMethodsProps> = ({ dri }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Catalog suggestions for the dropdowns (best-effort; empty = manual entry).
+  const [carriers, setCarriers] = useState<CodeName[]>([]);
+  const [services, setServices] = useState<CodeName[]>([]);
+  const [packages, setPackages] = useState<CodeName[]>([]);
+  const [titles, setTitles] = useState<string[]>([]);
+
   const load = () => {
     fetch(`/shipping_method_mappings?dri=${encodeURIComponent(dri)}`, {
       headers: jsonHeaders(),
@@ -56,11 +67,43 @@ const ShippingMethods: React.FC<ShippingMethodsProps> = ({ dri }) => {
       .catch(() => setError('Failed to load shipping methods'));
   };
 
-  useEffect(load, [dri]);
+  const catalog = (path: string): Promise<any> =>
+    fetch(`/shipping_catalog/${path}${path.includes('?') ? '&' : '?'}dri=${encodeURIComponent(dri)}`, {
+      headers: jsonHeaders(),
+    })
+      .then((res) => (res.ok ? res.json() : {}))
+      .catch(() => ({}));
+
+  // Load services + packages for the selected carrier (ShipStation scopes both
+  // to a carrier). Clears them when no carrier is chosen.
+  const loadCarrierChildren = (carrierCode: string) => {
+    if (!carrierCode) {
+      setServices([]);
+      setPackages([]);
+      return;
+    }
+    const cc = encodeURIComponent(carrierCode);
+    catalog(`services?carrier_code=${cc}`).then((d) => setServices(d.services || []));
+    catalog(`packages?carrier_code=${cc}`).then((d) => setPackages(d.packages || []));
+  };
+
+  useEffect(() => {
+    load();
+    catalog('carriers').then((d) => setCarriers(d.carriers || []));
+    catalog('fluid_methods').then((d) => setTitles(d.titles || []));
+  }, [dri]);
 
   const setField = (key: keyof typeof emptyForm) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  // Changing the carrier reloads its services/packages and clears the previous
+  // selections (they belong to the old carrier).
+  const setCarrier = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const carrier_code = e.target.value;
+    setForm((f) => ({ ...f, carrier_code, service_code: '', package_code: '' }));
+    loadCarrierChildren(carrier_code);
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,24 +214,28 @@ const ShippingMethods: React.FC<ShippingMethodsProps> = ({ dri }) => {
           <TextInput
             label="Fluid Shipping Title*"
             placeholder="Ground Shipping"
+            list="fluid-titles-list"
             value={form.fluid_shipping_title}
             onChange={setField('fluid_shipping_title')}
           />
           <TextInput
             label="Carrier Code"
             placeholder="stamps_com"
+            list="carriers-list"
             value={form.carrier_code}
-            onChange={setField('carrier_code')}
+            onChange={setCarrier}
           />
           <TextInput
             label="Service Code"
             placeholder="usps_priority_mail"
+            list="services-list"
             value={form.service_code}
             onChange={setField('service_code')}
           />
           <TextInput
             label="Package Code"
             placeholder="package"
+            list="packages-list"
             value={form.package_code}
             onChange={setField('package_code')}
           />
@@ -199,6 +246,29 @@ const ShippingMethods: React.FC<ShippingMethodsProps> = ({ dri }) => {
             onChange={setField('description')}
           />
         </div>
+
+        {/* Datalists provide suggestions from the connected ShipStation account
+            and Fluid, while still allowing a custom value to be typed. */}
+        <datalist id="fluid-titles-list">
+          {titles.map((t) => (
+            <option key={t} value={t} />
+          ))}
+        </datalist>
+        <datalist id="carriers-list">
+          {carriers.map((c) => (
+            <option key={c.code} value={c.code}>{c.name}</option>
+          ))}
+        </datalist>
+        <datalist id="services-list">
+          {services.map((s) => (
+            <option key={s.code} value={s.code}>{s.name}</option>
+          ))}
+        </datalist>
+        <datalist id="packages-list">
+          {packages.map((p) => (
+            <option key={p.code} value={p.code}>{p.name}</option>
+          ))}
+        </datalist>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
