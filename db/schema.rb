@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_03_13_000001) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_21_000002) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -70,6 +70,18 @@ ActiveRecord::Schema[8.0].define(version: 2026_03_13_000001) do
     t.index ["company_id"], name: "index_integration_settings_on_company_id"
   end
 
+  create_table "seen_shipping_methods", force: :cascade do |t|
+    t.bigint "company_id", null: false
+    t.string "fluid_shipping_title", null: false
+    t.integer "seen_count", default: 1, null: false
+    t.datetime "last_seen_at", null: false
+    t.string "example_order_number"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["company_id", "fluid_shipping_title"], name: "index_seen_ship_methods_on_company_and_title", unique: true
+    t.index ["company_id"], name: "index_seen_shipping_methods_on_company_id"
+  end
+
   create_table "settings", force: :cascade do |t|
     t.string "name", null: false
     t.string "description"
@@ -78,6 +90,19 @@ ActiveRecord::Schema[8.0].define(version: 2026_03_13_000001) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["name"], name: "index_settings_on_name", unique: true
+  end
+
+  create_table "shipping_method_mappings", force: :cascade do |t|
+    t.bigint "company_id", null: false
+    t.string "fluid_shipping_title", null: false
+    t.string "carrier_code"
+    t.string "service_code"
+    t.string "package_code"
+    t.string "description"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["company_id", "fluid_shipping_title"], name: "index_ship_method_maps_on_company_and_title", unique: true
+    t.index ["company_id"], name: "index_shipping_method_mappings_on_company_id"
   end
 
   create_table "shipstation_orders", force: :cascade do |t|
@@ -131,5 +156,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_03_13_000001) do
 
   add_foreign_key "events", "companies"
   add_foreign_key "integration_settings", "companies"
+  add_foreign_key "seen_shipping_methods", "companies"
+  add_foreign_key "shipping_method_mappings", "companies"
   add_foreign_key "shipstation_orders", "companies"
 end

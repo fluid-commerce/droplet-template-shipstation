@@ -94,7 +94,33 @@ module Shipstation
         taxAmount: params[:tax],
         customerNotes: params[:notes],
         internalNotes: params[:notes],
-      }
+      }.merge(shipping_service_fields)
+    end
+
+    # Resolves the Fluid order's shipping method title to ShipStation service
+    # fields. The title is always passed as requestedShippingService (ShipStation
+    # automation rules can key off it); carrier/service/package codes are added
+    # only when the admin has configured a mapping for the title.
+    def shipping_service_fields
+      title = shipping_title
+      return {} if title.blank?
+
+      SeenShippingMethod.record!(company: company, title: title, order_number: params[:order_number])
+
+      fields = { requestedShippingService: title }
+      mapping = company.shipping_method_mappings.find_by(fluid_shipping_title: title)
+      if mapping
+        fields[:carrierCode] = mapping.carrier_code if mapping.carrier_code.present?
+        fields[:serviceCode] = mapping.service_code if mapping.service_code.present?
+        fields[:packageCode] = mapping.package_code if mapping.package_code.present?
+      else
+        Rails.logger.warn("[CreateOrder] no shipping mapping for #{title.inspect}")
+      end
+      fields
+    end
+
+    def shipping_title
+      params.dig(:metadata, :shipping, :title).presence
     end
 
     def bill_to_payload
