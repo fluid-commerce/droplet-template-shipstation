@@ -19,6 +19,7 @@ Rails.application.routes.draw do
 
   resources :integration_settings, only: %i[create] do
     post :test_connection, on: :collection
+    post :test_v2_connection, on: :collection
   end
 
   resources :shipping_method_mappings, only: %i[index create destroy]
