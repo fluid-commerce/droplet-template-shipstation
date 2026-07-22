@@ -15,6 +15,17 @@ class RaisingOrdersService
   end
 end
 
+# Stand-in for Shipstation::CancelOrder returning a fixed outcome.
+class FakeCancel
+  def initialize(result)
+    @result = result
+  end
+
+  def call(_shipstation_order_id)
+    @result
+  end
+end
+
 class Shipstation::CreateOrderTest < ActiveSupport::TestCase
   fixtures :companies
 
@@ -297,5 +308,49 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
       end
     end
     _(error.message).must_include "ShipStation 500: server error"
+  end
+
+  # -- unfulfillable / cancellation -----------------------------------------
+
+  test "cancels a submitted order in ShipStation when Fluid marks it unfulfillable" do
+    @company.shipstation_orders.create!(
+      fluid_order_id: 555, fluid_order_number: "ORD-555", status: "SUBMITTED", shipstation_order_id: "999",
+    )
+    Shipstation::CancelOrder.stub(:new, ->(*) { FakeCancel.new(:cancelled) }) do
+      Shipstation::CreateOrder.new(order_params(status: "cancelled")).call
+    end
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "CANCELLED"
+  end
+
+  test "does NOT cancel a submitted order that already has a label" do
+    order = @company.shipstation_orders.create!(
+      fluid_order_id: 555, fluid_order_number: "ORD-555", status: "SUBMITTED", shipstation_order_id: "999",
+    )
+    Shipstation::CancelOrder.stub(:new, ->(*) { FakeCancel.new(:skipped_has_label) }) do
+      Shipstation::CreateOrder.new(order_params(status: "cancelled")).call
+    end
+    order.reload
+    _(order.status).must_equal "SUBMITTED"
+    _(order.last_error).must_include "already has a label"
+  end
+
+  test "marks a pre-submit order CANCELLED without calling ShipStation" do
+    @company.shipstation_orders.create!(
+      fluid_order_id: 555, fluid_order_number: "ORD-555", status: "HELD",
+    )
+    Shipstation::CancelOrder.stub(:new, ->(*) { raise "should not call ShipStation" }) do
+      Shipstation::CreateOrder.new(order_params(status: "cancelled")).call
+    end
+    _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "CANCELLED"
+  end
+
+  test "never recalls an already-SHIPPED order" do
+    order = @company.shipstation_orders.create!(
+      fluid_order_id: 555, fluid_order_number: "ORD-555", status: "SHIPPED", shipstation_order_id: "999",
+    )
+    Shipstation::CancelOrder.stub(:new, ->(*) { raise "should not call ShipStation" }) do
+      Shipstation::CreateOrder.new(order_params(status: "cancelled")).call
+    end
+    _(order.reload.status).must_equal "SHIPPED"
   end
 end

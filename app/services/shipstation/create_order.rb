@@ -39,7 +39,7 @@ module Shipstation
       # order (e.g. it was HELD and then cancelled in Fluid), mark it CANCELLED so
       # a later release doesn't ship it from a stale payload.
       if unfulfillable_status?
-        cancel_existing_pre_submit_record
+        handle_unfulfillable_order
         Rails.logger.warn("[CreateOrder] skipping #{params[:order_number]} with status #{order_status.inspect}")
         return Result.new(true, { skipped: "status=#{order_status}" }, nil)
       end
@@ -180,14 +180,35 @@ module Shipstation
       SeenShippingMethod.record!(company: company, title: shipping_title, order_number: params[:order_number])
     end
 
-    # Marks a pre-submit local record CANCELLED when Fluid reports the order is no
-    # longer fulfillable, so it is excluded from batch release / resend.
-    def cancel_existing_pre_submit_record
+    # Fluid reports the order is no longer fulfillable (cancelled/refunded/…).
+    # Cancel it wherever it lives:
+    #   * never sent to ShipStation  -> mark the local record CANCELLED
+    #   * already SHIPPED / cancelled -> leave it (never recall a shipped order)
+    #   * submitted to ShipStation    -> cancel it there too, UNLESS it already
+    #     has a label (ShipStation moves labeled orders to "shipped"); in that
+    #     case leave it and record why.
+    def handle_unfulfillable_order
       order = company.shipstation_orders.find_by(fluid_order_id: params[:id])
       return unless order
-      return if SUBMITTED_STATUSES.include?(order.status) || order.status == "CANCELLED"
+      return if order.status == "CANCELLED"
+      return if order.status == "SHIPPED"
 
-      order.update!(status: "CANCELLED", last_error: "Fluid order status: #{order_status}")
+      if order.shipstation_order_id.blank?
+        order.update!(status: "CANCELLED", last_error: "Fluid order status: #{order_status}")
+        return
+      end
+
+      case Shipstation::CancelOrder.new(company.id).call(order.shipstation_order_id)
+      when :skipped_has_label
+        order.update!(
+          last_error: "Fluid order #{order_status}, but the ShipStation order already has a label — not cancelled",
+          last_error_at: Time.current,
+        )
+        Rails.logger.warn("[CreateOrder] #{params[:order_number]} unfulfillable but already labeled in ShipStation")
+      else
+        order.update!(status: "CANCELLED", last_error: "Fluid order status: #{order_status}")
+        Rails.logger.info("[CreateOrder] cancelled #{params[:order_number]} in ShipStation (#{order_status})")
+      end
     end
 
     def order_status

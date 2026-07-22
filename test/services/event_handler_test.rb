@@ -48,6 +48,8 @@ describe EventHandler do
     EventHandler.register_handler("droplet.installed", DropletInstalledJob)
     EventHandler.register_handler("order.created", OrderCreatedJob)
     EventHandler.register_handler("order.updated", OrderUpdatedJob)
+    EventHandler.register_handler("order.cancelled", OrderUpdatedJob)
+    EventHandler.register_handler("order.refunded", OrderUpdatedJob)
     EventHandler.register_handler("order.shipped", OrderShippedJob)
   end
 
