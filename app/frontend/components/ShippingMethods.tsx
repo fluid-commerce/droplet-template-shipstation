@@ -111,6 +111,12 @@ const ShippingMethods: React.FC<ShippingMethodsProps> = ({ dri }) => {
       setError('Shipping method title is required');
       return;
     }
+    // ShipStation rejects a carrier without a service ("Invalid serviceCode"),
+    // so require the pair up front rather than letting the order push fail later.
+    if (form.carrier_code.trim() && !form.service_code.trim()) {
+      setError('Service Code is required when a Carrier Code is set (ShipStation rejects a carrier without a service).');
+      return;
+    }
     setSaving(true);
     setError(null);
     fetch('/shipping_method_mappings', {
@@ -226,7 +232,7 @@ const ShippingMethods: React.FC<ShippingMethodsProps> = ({ dri }) => {
             onChange={setCarrier}
           />
           <TextInput
-            label="Service Code"
+            label={form.carrier_code.trim() ? 'Service Code*' : 'Service Code'}
             placeholder="usps_priority_mail"
             list="services-list"
             value={form.service_code}

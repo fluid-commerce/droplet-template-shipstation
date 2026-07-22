@@ -34,7 +34,7 @@ class ReleaseHeldOrdersJobTest < ActiveSupport::TestCase
 
   test "releases orders past their hold window" do
     due = held_order(hold_until: 1.minute.ago, id: 901)
-    HTTParty.stub(:post, ->(*_a, **_k) { { "orderId" => 77 } }) do
+    HTTParty.stub(:post, ->(*_a, **_k) { FakeResponse.new({ "orderId" => 77 }) }) do
       FluidApi::V2::OrdersService.stub(:new, StubOrdersService.new) do
         ReleaseHeldOrdersJob.new.perform
       end

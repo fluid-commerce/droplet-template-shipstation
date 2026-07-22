@@ -9,6 +9,11 @@ class ShippingMethodMapping < ApplicationRecord
   validates :fluid_shipping_title, presence: true,
     uniqueness: { scope: :company_id, case_sensitive: false }
 
+  # ShipStation requires a carrier and service together — a carrier alone is
+  # rejected at order-push time ("Invalid serviceCode", HTTP 400). Enforce the
+  # pairing here so an incomplete mapping can't be saved in the first place.
+  validates :service_code, presence: true, if: -> { carrier_code.present? }
+
   # True when this mapping actually carries a ShipStation code to request.
   # A title with no codes still suppresses the "unmapped" warning but sends no
   # requestedShippingService override beyond the title itself.

@@ -46,7 +46,7 @@ describe OrdersController do
 
   it "resends a held order, bypassing the hold" do
     order = held_order(company: company, id: 703)
-    HTTParty.stub(:post, ->(*_a, **_k) { { "orderId" => 999 } }) do
+    HTTParty.stub(:post, ->(*_a, **_k) { FakeResponse.new({ "orderId" => 999 }) }) do
       FluidApi::V2::OrdersService.stub(:new, ResendFakeOrdersService.new) do
         post resend_order_url(order, dri: dri), headers: xhr
       end

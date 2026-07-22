@@ -5,6 +5,25 @@ require_relative "../config/environment"
 require "rails/test_help"
 require "minitest/rails"
 
+# Minimal stand-in for an HTTParty::Response used when stubbing ShipStation
+# POSTs: the service reads #parsed_response and #code off whatever is returned.
+class FakeResponse
+  def initialize(body, code = 200)
+    @body = body
+    @code = code
+  end
+
+  attr_reader :code
+
+  def parsed_response
+    @body
+  end
+
+  def [](key)
+    @body[key]
+  end
+end
+
 module ActiveSupport
   class TestCase
     # Run tests in parallel with specified workers
