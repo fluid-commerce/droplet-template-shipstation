@@ -31,18 +31,18 @@ private
     discovered = 0
 
     orders.find_each do |order|
-      shipment = Shipstation::Shipments.new(order.company_id).latest_for_order(order.shipstation_order_id)
-      next unless shipment
+      shipments = Shipstation::Shipments.new(order.company_id).all_for_order(order.shipstation_order_id)
+      next if shipments.empty?
 
       order.update!(
         status: "SHIPPED",
-        tracking_numbers: [ shipment["trackingNumber"] ].compact,
-        carrier: shipment["carrierCode"],
+        tracking_numbers: shipments.map { |s| s["trackingNumber"] }.compact.uniq,
+        carrier: shipments.first["carrierCode"],
         shipped_at: Time.current,
       )
       discovered += 1
       Rails.logger.info(
-        "[SyncTracking] Discovered shipment for #{order.fluid_order_number}: #{shipment['trackingNumber']}",
+        "[SyncTracking] Discovered #{shipments.size} shipment(s) for #{order.fluid_order_number}",
       )
     rescue StandardError => e
       Rails.logger.error("[SyncTracking] Discover failed for order #{order.fluid_order_number}: #{e.message}")
@@ -87,20 +87,39 @@ private
     raise "Fluid order not found for #{order.fluid_order_id}" if fluid_order.blank? || fluid_order[:error]
 
     order_items = fluid_order.dig(:order, :items)
-    tracking_number = order.tracking_numbers&.first
+    tracking_numbers = Array(order.tracking_numbers).compact_blank
 
-    raise "No tracking number for order #{order.fluid_order_number}" if tracking_number.blank?
+    raise "No tracking number for order #{order.fluid_order_number}" if tracking_numbers.empty?
 
-    # Create fulfillment in Fluid
+    # One tracking_informations entry per package so Fluid records every
+    # tracking number, each tagged with the carrier for tracking-link building.
+    carrier = fluid_carrier(order.carrier)
+    tracking_informations = tracking_numbers.map do |number|
+      { tracking_number: number, shipping_carrier: carrier }.compact
+    end
+
     order_service.order_fulfillment(
       id: order.fluid_order_id,
       order_items: order_items,
-      tracking_number: tracking_number,
+      tracking_informations: tracking_informations,
     )
 
     # Mark as synced
     order.update!(tracking_synced_to_fluid: true, tracking_synced_at: Time.current)
 
     Rails.logger.info("[SyncTracking] Synced to Fluid: #{order.fluid_order_number}")
+  end
+
+  # Normalize a ShipStation carrierCode (fedex, ups_walleted, stamps_com, …) to
+  # a carrier name Fluid recognizes for tracking-URL generation. Unknown codes
+  # pass through (Fluid simply won't build a URL) rather than being dropped.
+  def fluid_carrier(carrier_code)
+    case carrier_code.to_s.downcase
+    when /fedex/ then "fedex"
+    when /ups/ then "ups"
+    when /usps|stamps|postal/ then "usps"
+    when /dhl/ then "dhl"
+    else carrier_code.presence
+    end
   end
 end

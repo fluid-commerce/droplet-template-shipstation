@@ -2,12 +2,12 @@ require "test_helper"
 
 # Stand-in for Shipstation::Shipments so the poll phase doesn't hit ShipStation.
 class FakeShipments
-  def initialize(shipment)
-    @shipment = shipment
+  def initialize(shipments)
+    @shipments = Array(shipments)
   end
 
-  def latest_for_order(_shipstation_order_id)
-    @shipment
+  def all_for_order(_shipstation_order_id)
+    @shipments
   end
 end
 
@@ -86,7 +86,7 @@ describe SyncTrackingJob do
       shipment = { "trackingNumber" => "382763123186", "carrierCode" => "fedex", "voided" => false }
 
       stub_fluid_order_service do
-        Shipstation::Shipments.stub(:new, FakeShipments.new(shipment)) do
+        Shipstation::Shipments.stub(:new, FakeShipments.new([ shipment ])) do
           SyncTrackingJob.perform_now
         end
       end
@@ -99,9 +99,34 @@ describe SyncTrackingJob do
       _(submitted_order.tracking_synced_at).wont_be_nil
     end
 
+    it "records every tracking number from a multi-package order" do
+      shipments = [
+        { "trackingNumber" => "TRK1", "carrierCode" => "fedex", "voided" => false },
+        { "trackingNumber" => "TRK2", "carrierCode" => "fedex", "voided" => false },
+      ]
+      captures = {}
+      FluidApi::Commerce::OrderService.define_method(:retrieve_order) do |**_|
+        OpenStruct.new(body: { order: { id: 500, items: [] } }.to_json)
+      end
+      FluidApi::Commerce::OrderService.define_method(:order_fulfillment) do |**kwargs|
+        captures[kwargs[:id]] = kwargs[:tracking_informations]
+        OpenStruct.new(body: "{}")
+      end
+      Shipstation::Shipments.stub(:new, FakeShipments.new(shipments)) do
+        SyncTrackingJob.perform_now
+      end
+      FluidApi::Commerce::OrderService.remove_method(:retrieve_order)
+      FluidApi::Commerce::OrderService.remove_method(:order_fulfillment)
+
+      _(submitted_order.reload.tracking_numbers).must_equal %w[TRK1 TRK2]
+      pushed = captures[submitted_order.fluid_order_id]
+      _(pushed.map { |t| t[:tracking_number] }).must_equal %w[TRK1 TRK2]
+      _(pushed.map { |t| t[:shipping_carrier] }.uniq).must_equal [ "fedex" ]
+    end
+
     it "leaves a SUBMITTED order untouched when ShipStation has no shipment yet" do
       stub_fluid_order_service do
-        Shipstation::Shipments.stub(:new, FakeShipments.new(nil)) do
+        Shipstation::Shipments.stub(:new, FakeShipments.new([])) do
           SyncTrackingJob.perform_now
         end
       end
