@@ -161,6 +161,9 @@ jobs:
       - name: Run JavaScript tests
         run: yarn test
 
+      - name: Build test-mode Vite assets
+        run: bin/vite build --mode=test
+
       - name: Run Rails tests
         env:
           RAILS_ENV: test
