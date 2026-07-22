@@ -69,10 +69,11 @@ module Shipstation
   private
 
     def decide_and_process(ss_order)
-      # Idempotency: never resubmit an order already sent to ShipStation. This
-      # also makes order.updated / repeated releases safe.
+      # An order already in ShipStation: never blindly resubmit, but do propagate
+      # a genuine Fluid-side edit (address/items/shipping method) as long as the
+      # order hasn't been labeled yet. See reconcile_submitted.
       if SUBMITTED_STATUSES.include?(ss_order.status)
-        return Result.new(true, { skipped: "already #{ss_order.status}" }, nil)
+        return reconcile_submitted(ss_order)
       end
 
       # Hold unpaid orders instead of sending. An order.updated webhook releases
@@ -91,6 +92,40 @@ module Shipstation
       end
 
       submit_to_shipstation(ss_order)
+    end
+
+    # An order already sent to ShipStation received another order.created/updated.
+    # Re-push it ONLY when the shipping-relevant content actually changed AND the
+    # ShipStation order has not been labeled/shipped — never disturb a labeled
+    # order. createorder upserts by orderKey, so a re-push updates the existing
+    # ShipStation order in place.
+    def reconcile_submitted(ss_order)
+      return Result.new(true, { skipped: "already SHIPPED" }, nil) if ss_order.status == "SHIPPED"
+      return Result.new(true, { skipped: "no shipstation id" }, nil) if ss_order.shipstation_order_id.blank?
+      return Result.new(true, { skipped: "no change" }, nil) unless order_content_changed?(ss_order)
+
+      if Shipstation::OrderStatus.new(company.id).shipped?(ss_order.shipstation_order_id)
+        Rails.logger.info("[CreateOrder] #{params[:order_number]} changed but already labeled; not updating")
+        return Result.new(true, { skipped: "labeled" }, nil)
+      end
+
+      Rails.logger.info("[CreateOrder] re-pushing updated #{params[:order_number]} to ShipStation")
+      submit_to_shipstation(ss_order)
+    end
+
+    # Did the shipping-relevant part of the order change vs what we last sent?
+    # Compares only ship-to, line items (id/qty/sku/price), and the shipping
+    # method title — ignoring unrelated order.updated noise (notes, timestamps).
+    def order_content_changed?(ss_order)
+      shipping_signature(params.deep_stringify_keys) != shipping_signature(ss_order.request_payload || {})
+    end
+
+    def shipping_signature(payload)
+      {
+        "ship_to" => payload["ship_to"],
+        "items" => Array(payload["items"]).map { |i| i.slice("id", "quantity", "sku", "price") },
+        "title" => payload.dig("metadata", "shipping", "title"),
+      }
     end
 
     def hold_for_batch(ss_order)
@@ -120,6 +155,9 @@ module Shipstation
           status: "SUBMITTED",
           shipstation_order_id: shipstation_order_id.to_s,
           response_payload: body,
+          # Record exactly what we sent so a later order.updated can tell whether
+          # the order actually changed (see order_content_changed?).
+          request_payload: params,
         )
       end
 
