@@ -1,10 +1,33 @@
 require "test_helper"
 
+# Stand-in for Shipstation::Shipments so the poll phase doesn't hit ShipStation.
+class FakeShipments
+  def initialize(shipment)
+    @shipment = shipment
+  end
+
+  def latest_for_order(_shipstation_order_id)
+    @shipment
+  end
+end
+
 describe SyncTrackingJob do
   fixtures(:companies, :shipstation_orders)
 
   let(:acme) { companies(:acme) }
   let(:unsynced_order) { shipstation_orders(:shipped_unsynced) }
+  let(:submitted_order) { shipstation_orders(:submitted_order) }
+
+  # A no-op Fluid client so the push phase never hits the network.
+  def stub_fluid_order_service
+    body = { order: { id: 500, items: [ { id: 1, quantity: 1 } ] } }.to_json
+    FluidApi::Commerce::OrderService.define_method(:retrieve_order) { |**_| OpenStruct.new(body: body) }
+    FluidApi::Commerce::OrderService.define_method(:order_fulfillment) { |**_| OpenStruct.new(body: "{}") }
+    yield
+  ensure
+    FluidApi::Commerce::OrderService.remove_method(:retrieve_order)
+    FluidApi::Commerce::OrderService.remove_method(:order_fulfillment)
+  end
 
   describe "#perform" do
     it "finds orders that need syncing and marks them synced" do
@@ -55,6 +78,38 @@ describe SyncTrackingJob do
 
       unsynced_order.reload
       _(unsynced_order.tracking_synced_to_fluid).must_equal false
+    end
+  end
+
+  describe "polling ShipStation for shipments" do
+    it "discovers a shipped SUBMITTED order and syncs its tracking to Fluid" do
+      shipment = { "trackingNumber" => "382763123186", "carrierCode" => "fedex", "voided" => false }
+
+      stub_fluid_order_service do
+        Shipstation::Shipments.stub(:new, FakeShipments.new(shipment)) do
+          SyncTrackingJob.perform_now
+        end
+      end
+
+      submitted_order.reload
+      _(submitted_order.status).must_equal "SHIPPED"
+      _(submitted_order.tracking_numbers).must_equal [ "382763123186" ]
+      _(submitted_order.carrier).must_equal "fedex"
+      _(submitted_order.tracking_synced_to_fluid).must_equal true
+      _(submitted_order.tracking_synced_at).wont_be_nil
+    end
+
+    it "leaves a SUBMITTED order untouched when ShipStation has no shipment yet" do
+      stub_fluid_order_service do
+        Shipstation::Shipments.stub(:new, FakeShipments.new(nil)) do
+          SyncTrackingJob.perform_now
+        end
+      end
+
+      submitted_order.reload
+      _(submitted_order.status).must_equal "SUBMITTED"
+      _(submitted_order.tracking_numbers.to_a).must_be_empty
+      _(submitted_order.tracking_synced_to_fluid).must_equal false
     end
   end
 end
