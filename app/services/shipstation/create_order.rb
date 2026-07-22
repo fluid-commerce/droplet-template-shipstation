@@ -388,7 +388,7 @@ module Shipstation
 
     def shipstation_items
       params[:items].map do |item|
-        {
+        line = {
           lineItemKey: item[:id].to_s,
           sku: item[:sku],
           name: item[:title],
@@ -400,7 +400,30 @@ module Shipstation
           fulfillmentSku: item.dig(:product, :sku),
           adjustment: false,
         }
+        weight = item_weight(item)
+        line[:weight] = weight if weight
+        line
       end
+    end
+
+    # ShipStation weight object {value, units}. Fluid weights use kg/gm/lb/oz
+    # (default gm); ShipStation accepts only grams/ounces/pounds, so kg is
+    # converted to grams. Returns nil when Fluid has no positive weight, so an
+    # unweighted product just omits the field rather than sending 0.
+    FLUID_WEIGHT_UNITS = {
+      "gm" => "grams", "g" => "grams", "gram" => "grams", "grams" => "grams",
+      "lb" => "pounds", "lbs" => "pounds", "pound" => "pounds", "pounds" => "pounds",
+      "oz" => "ounces", "ounce" => "ounces", "ounces" => "ounces",
+    }.freeze
+
+    def item_weight(item)
+      value = item[:weight].to_f
+      return nil unless value.positive?
+
+      unit = item[:unit_of_weight].presence.to_s.downcase
+      return { value: (value * 1000).round(4), units: "grams" } if unit == "kg"
+
+      { value: value, units: FLUID_WEIGHT_UNITS.fetch(unit, "grams") }
     end
 
     class Result
