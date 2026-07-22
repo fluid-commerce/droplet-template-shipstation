@@ -9,5 +9,6 @@
      data-hold-for-batch="<%= @integration_settings&.hold_for_batch ? 'true' : 'false' %>"
      data-batch-window-minutes="<%= @integration_settings&.batch_window_minutes %>"
      data-api-version="<%= @integration_settings&.api_version || 'v1' %>"
-     data-v2-api-key="<%= @integration_settings&.settings&.dig('v2_api_key') %>">
+     data-v2-api-key="<%= @integration_settings&.settings&.dig('v2_api_key') %>"
+     data-store-id="<%= @integration_settings&.store_id %>">
 </div>

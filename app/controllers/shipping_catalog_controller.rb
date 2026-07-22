@@ -26,6 +26,12 @@ class ShippingCatalogController < ApplicationController
     render json: { packages: data.map { |p| code_name(p) } }
   end
 
+  # ShipStation stores an order can be assigned to (advancedOptions.storeId).
+  def stores
+    data = Shipstation::Carriers.new(current_company.id).stores
+    render json: { stores: data.map { |s| store_json(s) } }
+  end
+
   # Fluid shipping method titles: the configured methods from Fluid merged with
   # the titles actually seen on orders (which cover strategies the API omits).
   def fluid_methods
@@ -44,5 +50,13 @@ private
 
   def code_name(hash, fallback_name: nil)
     { code: hash["code"], name: hash["name"].presence || fallback_name || hash["code"] }
+  end
+
+  def store_json(store)
+    {
+      id: store["storeId"].to_s,
+      name: store["storeName"].presence || "Store #{store['storeId']}",
+      marketplace: store["marketplaceName"],
+    }
   end
 end

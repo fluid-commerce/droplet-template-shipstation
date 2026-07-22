@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { TextInput } from "./input/TextInput";
 import ConnectionStatusButton from './ConnectionStatusButton';
 
@@ -10,6 +10,13 @@ interface ConfigurationFormProps {
   batchWindowMinutes: string;
   apiVersion: string;
   v2ApiKey: string;
+  storeId: string;
+}
+
+interface Store {
+  id: string;
+  name: string;
+  marketplace: string | null;
 }
 
 type ConnectionStatus = 'default' | 'connecting' | 'connected' | 'error';
@@ -23,14 +30,25 @@ const jsonHeaders = (): HeadersInit => ({
   'X-Requested-With': 'XMLHttpRequest',
 });
 
-const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKey }) => {
+const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKey, storeId }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('default');
   const [batchEnabled, setBatchEnabled] = useState<boolean>(holdForBatch);
   const [version, setVersion] = useState<string>(apiVersion === 'v2' ? 'v2' : 'v1');
   const [v2Key, setV2Key] = useState<string>(v2ApiKey || '');
   const [v2Test, setV2Test] = useState<V2TestState>({ status: 'default', sandbox: false });
+  const [store, setStore] = useState<string>(storeId || '');
+  const [stores, setStores] = useState<Store[]>([]);
 
   const isSandboxKey = v2Key.startsWith('TEST_');
+
+  // Load the connected account's stores so orders can be assigned to one.
+  // Best-effort: on failure the dropdown is empty and the saved value stands.
+  useEffect(() => {
+    fetch(`/shipping_catalog/stores?dri=${encodeURIComponent(dri)}`, { headers: jsonHeaders() })
+      .then((res) => (res.ok ? res.json() : { stores: [] }))
+      .then((data) => setStores(data.stores || []))
+      .catch(() => setStores([]));
+  }, [dri]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -44,6 +62,7 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiS
         batch_window_minutes: formData.get('batchWindowMinutes') || '',
         api_version: version,
         v2_api_key: v2Key,
+        store_id: store,
       }
     };
 
@@ -203,6 +222,37 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiS
               </p>
             </div>
           )}
+        </div>
+
+        <div className="bg-white rounded-lg p-6 border border-gray-200">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Store Assignment</h2>
+            <p className="text-sm text-gray-600">
+              Which ShipStation store new orders are created in. Leave as the default to use the
+              store tied to your API key. Marketplace stores (Shopify, WooCommerce) are shown but
+              typically sync from their own source — a manual/custom store is usually the safer target.
+            </p>
+          </div>
+
+          <div className="max-w-md">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
+            <select
+              value={store}
+              onChange={(e) => setStore(e.target.value)}
+              className="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-xs ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm"
+            >
+              <option value="">Default (store for API key)</option>
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.marketplace ? ` — ${s.marketplace}` : ''}
+                </option>
+              ))}
+              {/* Preserve a saved store that isn't in the fetched list (e.g. inactive). */}
+              {store && !stores.some((s) => s.id === store) && (
+                <option value={store}>Saved store #{store}</option>
+              )}
+            </select>
+          </div>
         </div>
 
         <div className="bg-white rounded-lg p-6 border border-gray-200">
