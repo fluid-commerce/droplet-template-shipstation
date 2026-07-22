@@ -13,6 +13,13 @@ class FakeCarriers
   def packages(_carrier_code)
     [ { "code" => "package", "name" => "Package" } ]
   end
+
+  def stores
+    [
+      { "storeId" => 2099104, "storeName" => "Manual Orders", "marketplaceName" => "ShipStation" },
+      { "storeId" => 3618888, "storeName" => "NuvaMed", "marketplaceName" => "Shopify" },
+    ]
+  end
 end
 
 class FakeFluidMethods
@@ -63,6 +70,16 @@ describe ShippingCatalogController do
     end
     must_respond_with :success
     _(JSON.parse(response.body)["titles"]).must_equal [ "Express", "Ground Shipping", "Overnight" ]
+  end
+
+  it "returns stores as id/name/marketplace" do
+    Shipstation::Carriers.stub(:new, FakeCarriers.new) do
+      get shipping_catalog_stores_url(dri: dri), headers: xhr
+    end
+    must_respond_with :success
+    stores = JSON.parse(response.body)["stores"]
+    _(stores[0]).must_equal({ "id" => "2099104", "name" => "Manual Orders", "marketplace" => "ShipStation" })
+    _(stores[1]).must_equal({ "id" => "3618888", "name" => "NuvaMed", "marketplace" => "Shopify" })
   end
 
   it "rejects an unknown dri" do

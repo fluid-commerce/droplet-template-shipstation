@@ -242,6 +242,19 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     _(@company.seen_shipping_methods.find_by(fluid_shipping_title: "Overnight")).wont_be_nil
   end
 
+  # -- store assignment -----------------------------------------------------
+
+  test "assigns the configured store via advancedOptions.storeId" do
+    @company.integration_setting.update!(store_id: "3618888")
+    body = run_with_captured_body(order_params)
+    _(body["advancedOptions"]).must_equal({ "storeId" => 3618888 })
+  end
+
+  test "omits advancedOptions when no store is configured" do
+    body = run_with_captured_body(order_params)
+    _(body.key?("advancedOptions")).must_equal false
+  end
+
   # -- carrier/service pairing + failure handling ---------------------------
 
   test "drops a carrier with no service and sends requestedShippingService only" do

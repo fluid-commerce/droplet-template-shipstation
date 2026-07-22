@@ -16,6 +16,7 @@ class IntegrationSettingsController < ApplicationController
     }
     apply_batching_settings(integration_setting)
     apply_api_version(integration_setting)
+    apply_store_id(integration_setting)
 
     integration_setting.save!
 
@@ -68,8 +69,15 @@ private
     integration_setting.api_version = integration_setting_params[:api_version]
   end
 
+  # Blank selection ("") clears the store so orders fall back to the default.
+  def apply_store_id(integration_setting)
+    return unless integration_setting_params.key?(:store_id)
+
+    integration_setting.store_id = integration_setting_params[:store_id].presence
+  end
+
   def integration_setting_params
     params.require(:integration_setting)
-      .permit(:api_key, :api_secret, :v2_api_key, :api_version, :hold_for_batch, :batch_window_minutes)
+      .permit(:api_key, :api_secret, :v2_api_key, :api_version, :hold_for_batch, :batch_window_minutes, :store_id)
   end
 end

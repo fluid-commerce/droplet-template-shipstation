@@ -258,7 +258,16 @@ module Shipstation
         taxAmount: params[:tax],
         customerNotes: params[:notes],
         internalNotes: params[:notes],
-      }.merge(shipping_service_fields)
+      }.merge(shipping_service_fields).merge(store_fields)
+    end
+
+    # Assigns the order to the configured ShipStation store, if any. Blank =
+    # ShipStation's default store for the API key (unchanged behavior).
+    def store_fields
+      store_id = @integration_setting.store_id.presence
+      return {} unless store_id
+
+      { advancedOptions: { storeId: store_id.to_i } }
     end
 
     # Resolves the Fluid order's shipping method title to ShipStation service

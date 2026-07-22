@@ -28,6 +28,7 @@ Rails.application.routes.draw do
     get "shipping_catalog/carriers"
     get "shipping_catalog/services"
     get "shipping_catalog/packages"
+    get "shipping_catalog/stores"
     get "shipping_catalog/fluid_methods"
   end
 

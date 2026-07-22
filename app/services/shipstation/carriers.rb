@@ -31,6 +31,12 @@ module Shipstation
       get("/carriers/listpackages", carrierCode: carrier_code)
     end
 
+    # [{ "storeId" => 123, "storeName" => "…", "marketplaceName" => "Shopify",
+    #    "active" => true }, ...] — the stores orders can be assigned to.
+    def stores
+      get("/stores", showInactive: false)
+    end
+
   private
 
     def get(path, query = {})

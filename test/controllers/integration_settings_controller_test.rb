@@ -77,6 +77,20 @@ describe IntegrationSettingsController do
     must_respond_with :unprocessable_entity
   end
 
+  it "saves the selected store_id and clears it when blank" do
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: { api_key: "k", api_secret: "s", store_id: "3618888" } },
+      headers: xhr
+    must_respond_with :created
+    _(company.reload.integration_setting.store_id).must_equal "3618888"
+
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: { api_key: "k", api_secret: "s", store_id: "" } },
+      headers: xhr
+    must_respond_with :created
+    _(company.reload.integration_setting.store_id).must_be_nil
+  end
+
   it "reports the V2 connection result including sandbox" do
     company.create_integration_setting!(
       settings: { "api_key" => "k", "api_secret" => "s", "v2_api_key" => "TEST_abc" }, api_version: "v2",
