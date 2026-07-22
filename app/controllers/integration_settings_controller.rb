@@ -9,11 +9,7 @@ class IntegrationSettingsController < ApplicationController
     integration_setting = current_company.integration_setting ||
       current_company.build_integration_setting
 
-    integration_setting.settings = {
-      api_key: integration_setting_params[:api_key],
-      api_secret: integration_setting_params[:api_secret],
-      v2_api_key: integration_setting_params[:v2_api_key],
-    }
+    apply_secret_settings(integration_setting)
     apply_batching_settings(integration_setting)
     apply_api_version(integration_setting)
     apply_store_id(integration_setting)
@@ -38,6 +34,24 @@ class IntegrationSettingsController < ApplicationController
   end
 
 private
+
+  SECRET_KEYS = %i[api_key api_secret v2_api_key].freeze
+
+  # Secrets are write-only: the browser never receives stored values (see
+  # home/index.html.erb), so it only sends a secret when the admin types a new
+  # one. Overwrite a key only when a non-blank value is present; otherwise keep
+  # the stored secret. This prevents a batching/store/version-only save from
+  # wiping credentials it never had.
+  def apply_secret_settings(integration_setting)
+    settings = integration_setting.settings.presence || {}
+    SECRET_KEYS.each do |key|
+      next unless integration_setting_params.key?(key)
+
+      value = integration_setting_params[key]
+      settings[key.to_s] = value if value.present?
+    end
+    integration_setting.settings = settings
+  end
 
   # Defense against CSRF/cross-origin form posts now that Rails token
   # verification is skipped: browsers only allow this header on same-origin

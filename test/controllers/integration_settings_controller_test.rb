@@ -42,6 +42,43 @@ describe IntegrationSettingsController do
     _(setting.batch_window_minutes).must_equal 30
   end
 
+  it "preserves stored secrets when a save omits them" do
+    company.create_integration_setting!(
+      settings: { "api_key" => "k", "api_secret" => "s", "v2_api_key" => "v2k" },
+    )
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: { hold_for_batch: "true", batch_window_minutes: "15" } },
+      headers: xhr
+    must_respond_with :created
+    setting = company.reload.integration_setting
+    _(setting.settings["api_key"]).must_equal "k"
+    _(setting.settings["api_secret"]).must_equal "s"
+    _(setting.settings["v2_api_key"]).must_equal "v2k"
+    _(setting.batch_window_minutes).must_equal 15
+  end
+
+  it "does not wipe a stored secret when its field is sent blank" do
+    company.create_integration_setting!(settings: { "api_key" => "k", "api_secret" => "s" })
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: { api_key: "", api_secret: "" } },
+      headers: xhr
+    must_respond_with :created
+    setting = company.reload.integration_setting
+    _(setting.settings["api_key"]).must_equal "k"
+    _(setting.settings["api_secret"]).must_equal "s"
+  end
+
+  it "replaces a stored secret when a new value is provided" do
+    company.create_integration_setting!(settings: { "api_key" => "old", "api_secret" => "s" })
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: { api_key: "new" } },
+      headers: xhr
+    must_respond_with :created
+    setting = company.reload.integration_setting
+    _(setting.settings["api_key"]).must_equal "new"
+    _(setting.settings["api_secret"]).must_equal "s"
+  end
+
   it "rejects a zero or negative batch window" do
     post integration_settings_url,
       params: { dri: dri, integration_setting: {
