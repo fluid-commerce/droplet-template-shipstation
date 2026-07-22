@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_21_000004) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_22_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -69,6 +69,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_21_000004) do
     t.datetime "updated_at", null: false
     t.boolean "hold_for_batch", default: false, null: false
     t.integer "batch_window_minutes"
+    t.string "api_version", default: "v1", null: false
     t.index ["company_id"], name: "index_integration_settings_on_company_id"
   end
 

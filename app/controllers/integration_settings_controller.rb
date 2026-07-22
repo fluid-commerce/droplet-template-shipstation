@@ -12,8 +12,10 @@ class IntegrationSettingsController < ApplicationController
     integration_setting.settings = {
       api_key: integration_setting_params[:api_key],
       api_secret: integration_setting_params[:api_secret],
+      v2_api_key: integration_setting_params[:v2_api_key],
     }
     apply_batching_settings(integration_setting)
+    apply_api_version(integration_setting)
 
     integration_setting.save!
 
@@ -26,6 +28,12 @@ class IntegrationSettingsController < ApplicationController
     connected = Shipstation::TestConnection.new(current_company.id).call
 
     render json: { connection: connected }
+  end
+
+  def test_v2_connection
+    result = Shipstation::V2::TestConnection.new(current_company.id).call
+
+    render json: result
   end
 
 private
@@ -53,8 +61,15 @@ private
     end
   end
 
+  # Only touch api_version when the client sent it (guards a partial save).
+  def apply_api_version(integration_setting)
+    return unless integration_setting_params.key?(:api_version)
+
+    integration_setting.api_version = integration_setting_params[:api_version]
+  end
+
   def integration_setting_params
     params.require(:integration_setting)
-      .permit(:api_key, :api_secret, :hold_for_batch, :batch_window_minutes)
+      .permit(:api_key, :api_secret, :v2_api_key, :api_version, :hold_for_batch, :batch_window_minutes)
   end
 end

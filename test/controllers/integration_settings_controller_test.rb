@@ -56,4 +56,38 @@ describe IntegrationSettingsController do
       params: { dri: dri, integration_setting: { api_key: "k", api_secret: "s" } }
     must_respond_with :unauthorized
   end
+
+  it "saves the api_version and v2 api key" do
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: {
+        api_key: "k", api_secret: "s", api_version: "v2", v2_api_key: "TEST_abc",
+      }, },
+      headers: xhr
+    must_respond_with :created
+    setting = company.reload.integration_setting
+    _(setting.api_version).must_equal "v2"
+    _(setting.v2_api_key).must_equal "TEST_abc"
+    _(setting.sandbox?).must_equal true
+  end
+
+  it "rejects an invalid api_version" do
+    post integration_settings_url,
+      params: { dri: dri, integration_setting: { api_key: "k", api_secret: "s", api_version: "v9" } },
+      headers: xhr
+    must_respond_with :unprocessable_entity
+  end
+
+  it "reports the V2 connection result including sandbox" do
+    company.create_integration_setting!(
+      settings: { "api_key" => "k", "api_secret" => "s", "v2_api_key" => "TEST_abc" }, api_version: "v2",
+    )
+    HTTParty.stub(:get, OpenStruct.new(code: 200)) do
+      post test_v2_connection_integration_settings_url,
+        params: { dri: dri }, headers: xhr
+    end
+    must_respond_with :success
+    body = JSON.parse(response.body)
+    _(body["connected"]).must_equal true
+    _(body["sandbox"]).must_equal true
+  end
 end
