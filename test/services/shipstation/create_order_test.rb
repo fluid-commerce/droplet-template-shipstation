@@ -26,6 +26,17 @@ class FakeCancel
   end
 end
 
+# Stand-in for Shipstation::OrderStatus reporting a fixed shipped? value.
+class FakeOrderStatus
+  def initialize(shipped)
+    @shipped = shipped
+  end
+
+  def shipped?(_shipstation_order_id)
+    @shipped
+  end
+end
+
 class Shipstation::CreateOrderTest < ActiveSupport::TestCase
   fixtures :companies
 
@@ -352,5 +363,51 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
       Shipstation::CreateOrder.new(order_params(status: "cancelled")).call
     end
     _(order.reload.status).must_equal "SHIPPED"
+  end
+
+  # -- propagating post-submit edits ----------------------------------------
+
+  def submitted_order(request_payload)
+    @company.shipstation_orders.create!(
+      fluid_order_id: 555, fluid_order_number: "ORD-555", status: "SUBMITTED",
+      shipstation_order_id: "999", request_payload: request_payload,
+    )
+  end
+
+  test "does not re-push an unchanged submitted order" do
+    submitted_order("ship_to" => { "name" => "X" }, "items" => [])
+    posted = false
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; FakeResponse.new({ "orderId" => 42 }) }) do
+      Shipstation::OrderStatus.stub(:new, ->(*) { FakeOrderStatus.new(false) }) do
+        Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment")).call
+      end
+    end
+    _(posted).must_equal false
+  end
+
+  test "re-pushes a changed submitted order that is not yet labeled" do
+    order = submitted_order("ship_to" => { "name" => "OLD ADDRESS" }, "items" => [])
+    posted = false
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; FakeResponse.new({ "orderId" => 42 }) }) do
+      Shipstation::OrderStatus.stub(:new, ->(*) { FakeOrderStatus.new(false) }) do
+        FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
+          Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment")).call
+        end
+      end
+    end
+    _(posted).must_equal true
+    _(order.reload.request_payload["ship_to"]["name"]).must_equal "X"
+  end
+
+  test "does not re-push a changed order that ShipStation has already labeled" do
+    order = submitted_order("ship_to" => { "name" => "OLD ADDRESS" }, "items" => [])
+    posted = false
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; FakeResponse.new({ "orderId" => 42 }) }) do
+      Shipstation::OrderStatus.stub(:new, ->(*) { FakeOrderStatus.new(true) }) do
+        Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment")).call
+      end
+    end
+    _(posted).must_equal false
+    _(order.reload.request_payload["ship_to"]["name"]).must_equal "OLD ADDRESS"
   end
 end
