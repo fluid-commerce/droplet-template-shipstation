@@ -120,6 +120,50 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     _(body.key?("carrierCode")).must_equal false
   end
 
+  # -- item weight ----------------------------------------------------------
+
+  def order_params_with_items(items, id: 555)
+    {
+      "company_id" => @company.fluid_company_id,
+      "order" => {
+        "id" => id, "order_number" => "ORD-#{id}", "email" => "a@b.com",
+        "ship_to" => { "name" => "X" }, "metadata" => {}, "items" => items,
+      },
+    }
+  end
+
+  def weight_of(item)
+    @order_seq = (@order_seq || 554) + 1
+    body = run_with_captured_body(order_params_with_items([ item ], id: @order_seq))
+    body["items"][0]["weight"]
+  end
+
+  test "maps Fluid gram weight to ShipStation grams" do
+    _(weight_of("id" => 1, "weight" => "0.5", "unit_of_weight" => "gm"))
+      .must_equal({ "value" => 0.5, "units" => "grams" })
+  end
+
+  test "maps pounds and ounces" do
+    _(weight_of("id" => 1, "weight" => "2", "unit_of_weight" => "lb"))
+      .must_equal({ "value" => 2.0, "units" => "pounds" })
+    _(weight_of("id" => 1, "weight" => "8", "unit_of_weight" => "oz"))
+      .must_equal({ "value" => 8.0, "units" => "ounces" })
+  end
+
+  test "converts kilograms to grams" do
+    _(weight_of("id" => 1, "weight" => "1.5", "unit_of_weight" => "kg"))
+      .must_equal({ "value" => 1500.0, "units" => "grams" })
+  end
+
+  test "defaults a missing unit to grams (Fluid's default)" do
+    _(weight_of("id" => 1, "weight" => "0.1", "unit_of_weight" => nil))
+      .must_equal({ "value" => 0.1, "units" => "grams" })
+  end
+
+  test "omits weight when the item has none" do
+    _(weight_of("id" => 1, "weight" => "0")).must_be_nil
+  end
+
   # -- status gating / payment hold ----------------------------------------
 
   test "submits when status is awaiting_shipment" do
