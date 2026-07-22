@@ -2,13 +2,20 @@
   <%= vite_typescript_tag 'home.tsx' %>
 <% end %>
 
+<%#
+  Credentials are never rendered into the DOM — only whether each is configured.
+  Secrets are write-only from the browser: the form posts a new value to replace
+  one, and a blank field leaves the stored secret untouched (see
+  IntegrationSettingsController#apply_secret_settings).
+%>
 <div id="root"
      data-dri="<%= @dri %>"
-     data-api-key="<%= @integration_settings&.settings&.dig('api_key') %>"
-     data-api-secret="<%= @integration_settings&.settings&.dig('api_secret') %>"
+     data-api-key-set="<%= @integration_settings&.settings&.dig('api_key').present? %>"
+     data-api-secret-set="<%= @integration_settings&.settings&.dig('api_secret').present? %>"
      data-hold-for-batch="<%= @integration_settings&.hold_for_batch ? 'true' : 'false' %>"
      data-batch-window-minutes="<%= @integration_settings&.batch_window_minutes %>"
      data-api-version="<%= @integration_settings&.api_version || 'v1' %>"
-     data-v2-api-key="<%= @integration_settings&.settings&.dig('v2_api_key') %>"
+     data-v2-api-key-set="<%= @integration_settings&.v2_api_key.present? %>"
+     data-v2-sandbox="<%= @integration_settings&.sandbox? ? 'true' : 'false' %>"
      data-store-id="<%= @integration_settings&.store_id %>">
 </div>

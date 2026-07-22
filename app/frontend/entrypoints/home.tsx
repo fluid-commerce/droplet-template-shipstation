@@ -6,12 +6,13 @@ import Activity from "../components/Activity";
 
 interface FluidProps {
   dri: string;
-  apiKey: string;
-  apiSecret: string;
+  apiKeySet: boolean;
+  apiSecretSet: boolean;
   holdForBatch: boolean;
   batchWindowMinutes: string;
   apiVersion: string;
-  v2ApiKey: string;
+  v2ApiKeySet: boolean;
+  v2Sandbox: boolean;
   storeId: string;
 }
 
@@ -70,13 +71,13 @@ const TabContent: React.FC<TabContentProps> = ({ tabs, activeTab }) => {
   return <Component {...activeTabData.props} />;
 };
 
-const Fluid = ({ dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKey, storeId }: FluidProps) => {
+const Fluid = ({ dri, apiKeySet, apiSecretSet, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKeySet, v2Sandbox, storeId }: FluidProps) => {
   const tabs: TabItem[] = [
     {
       id: 'configuration',
       label: 'Configuration',
       component: ConfigurationForm,
-      props: { dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKey, storeId }
+      props: { dri, apiKeySet, apiSecretSet, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKeySet, v2Sandbox, storeId }
     },
     {
       id: 'shipping-methods',
@@ -107,23 +108,25 @@ const root = createRoot(document.getElementById('root') as HTMLElement);
 
 const rootElement = document.getElementById('root') as HTMLElement;
 const dri = rootElement.dataset.dri || '';
-const apiKey = rootElement.dataset.apiKey || '';
-const apiSecret = rootElement.dataset.apiSecret || '';
+const apiKeySet = rootElement.dataset.apiKeySet === 'true';
+const apiSecretSet = rootElement.dataset.apiSecretSet === 'true';
 const holdForBatch = rootElement.dataset.holdForBatch === 'true';
 const batchWindowMinutes = rootElement.dataset.batchWindowMinutes || '';
 const apiVersion = rootElement.dataset.apiVersion || 'v1';
-const v2ApiKey = rootElement.dataset.v2ApiKey || '';
+const v2ApiKeySet = rootElement.dataset.v2ApiKeySet === 'true';
+const v2Sandbox = rootElement.dataset.v2Sandbox === 'true';
 const storeId = rootElement.dataset.storeId || '';
 
 root.render(
   <Fluid
     dri={dri}
-    apiKey={apiKey}
-    apiSecret={apiSecret}
+    apiKeySet={apiKeySet}
+    apiSecretSet={apiSecretSet}
     holdForBatch={holdForBatch}
     batchWindowMinutes={batchWindowMinutes}
     apiVersion={apiVersion}
-    v2ApiKey={v2ApiKey}
+    v2ApiKeySet={v2ApiKeySet}
+    v2Sandbox={v2Sandbox}
     storeId={storeId}
   />
 );

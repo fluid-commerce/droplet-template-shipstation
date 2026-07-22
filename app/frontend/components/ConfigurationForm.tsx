@@ -4,12 +4,13 @@ import ConnectionStatusButton from './ConnectionStatusButton';
 
 interface ConfigurationFormProps {
   dri: string;
-  apiKey: string;
-  apiSecret: string;
+  apiKeySet: boolean;
+  apiSecretSet: boolean;
   holdForBatch: boolean;
   batchWindowMinutes: string;
   apiVersion: string;
-  v2ApiKey: string;
+  v2ApiKeySet: boolean;
+  v2Sandbox: boolean;
   storeId: string;
 }
 
@@ -30,16 +31,20 @@ const jsonHeaders = (): HeadersInit => ({
   'X-Requested-With': 'XMLHttpRequest',
 });
 
-const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiSecret, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKey, storeId }) => {
+const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKeySet, apiSecretSet, holdForBatch, batchWindowMinutes, apiVersion, v2ApiKeySet, v2Sandbox, storeId }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('default');
   const [batchEnabled, setBatchEnabled] = useState<boolean>(holdForBatch);
   const [version, setVersion] = useState<string>(apiVersion === 'v2' ? 'v2' : 'v1');
-  const [v2Key, setV2Key] = useState<string>(v2ApiKey || '');
+  const [v2Key, setV2Key] = useState<string>('');
   const [v2Test, setV2Test] = useState<V2TestState>({ status: 'default', sandbox: false });
   const [store, setStore] = useState<string>(storeId || '');
   const [stores, setStores] = useState<Store[]>([]);
 
-  const isSandboxKey = v2Key.startsWith('TEST_');
+  // Secrets are never sent to the browser. Fields start empty; a placeholder
+  // signals whether one is already stored. The sandbox badge reflects a typed
+  // TEST_ key or, before typing, the stored key's sandbox flag from the server.
+  const isSandboxKey = v2Key ? v2Key.startsWith('TEST_') : (v2ApiKeySet && v2Sandbox);
+  const savedPlaceholder = (isSet: boolean, hint: string) => (isSet ? '•••••••• (saved — leave blank to keep)' : hint);
 
   // Load the connected account's stores so orders can be assigned to one.
   // Best-effort: on failure the dropdown is empty and the saved value stands.
@@ -53,18 +58,21 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiS
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    const data = {
-      dri,
-      integration_setting: {
-        api_key: formData.get('apiKey'),
-        api_secret: formData.get('apiSecret'),
-        hold_for_batch: batchEnabled,
-        batch_window_minutes: formData.get('batchWindowMinutes') || '',
-        api_version: version,
-        v2_api_key: v2Key,
-        store_id: store,
-      }
+    // Only send a secret when the user actually entered a new value; a blank
+    // field means "keep the stored secret" (the server preserves it).
+    const setting: Record<string, unknown> = {
+      hold_for_batch: batchEnabled,
+      batch_window_minutes: formData.get('batchWindowMinutes') || '',
+      api_version: version,
+      store_id: store,
     };
+    const apiKeyVal = (formData.get('apiKey') as string || '').trim();
+    const apiSecretVal = (formData.get('apiSecret') as string || '').trim();
+    if (apiKeyVal) setting.api_key = apiKeyVal;
+    if (apiSecretVal) setting.api_secret = apiSecretVal;
+    if (v2Key.trim()) setting.v2_api_key = v2Key.trim();
+
+    const data = { dri, integration_setting: setting };
 
     // Send form data to your endpoint
     fetch('/integration_settings', {
@@ -133,31 +141,34 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiS
         <div className="bg-white rounded-lg p-6 border border-gray-200">
           <div className="mb-4">
             <h2 className="text-lg font-semibold text-gray-900">API Credentials</h2>
-            <p className="text-sm text-gray-600">Configure your API connection settings</p>
+            <p className="text-sm text-gray-600">
+              Enter your ShipStation V1 API key and secret. Stored credentials are never shown
+              again — leave a field blank to keep the saved value, or type a new one to replace it.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                API Key*
+                API Key{apiKeySet ? '' : '*'}
               </label>
               <TextInput
                 type="text"
                 name="apiKey"
-                placeholder="Username"
-                defaultValue={apiKey}
+                autoComplete="off"
+                placeholder={savedPlaceholder(apiKeySet, 'Username')}
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                API Secret*
+                API Secret{apiSecretSet ? '' : '*'}
               </label>
               <TextInput
                 type="password"
                 name="apiSecret"
-                placeholder="Password"
-                defaultValue={apiSecret}
+                autoComplete="new-password"
+                placeholder={savedPlaceholder(apiSecretSet, 'Password')}
               />
             </div>
           </div>
@@ -197,7 +208,8 @@ const ConfigurationForm: React.FC<ConfigurationFormProps> = ({ dri, apiKey, apiS
               <TextInput
                 type="password"
                 name="v2ApiKey"
-                placeholder="Production key, or TEST_… for sandbox"
+                autoComplete="new-password"
+                placeholder={savedPlaceholder(v2ApiKeySet, 'Production key, or TEST_… for sandbox')}
                 value={v2Key}
                 onChange={(e) => setV2Key(e.target.value)}
               />
