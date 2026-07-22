@@ -16,23 +16,39 @@ module Shipstation
 
     # Every non-voided shipment carrying a tracking number for a ShipStation
     # order id (an order can ship in several packages, each with its own
-    # tracking number). Returns [] when the order has not shipped or on any
-    # failure.
+    # tracking number). Walks all result pages. Returns [] when the order has
+    # not shipped or on a non-rate-limit failure; a persistent 429 re-raises so
+    # the caller can back off rather than mistake it for "not shipped".
     def all_for_order(shipstation_order_id)
       return [] if shipstation_order_id.blank? || api_key.blank? || api_secret.blank?
 
-      response = HTTParty.get("#{SHIPSTATION_API_BASE}/shipments",
-        query: { orderId: shipstation_order_id },
-        headers: headers)
-      return [] unless response.code == 200
-
-      shipments = JSON.parse(response.body)["shipments"]
-      return [] unless shipments.is_a?(Array)
-
+      shipments = each_page(orderId: shipstation_order_id)
       shipments.select { |s| !s["voided"] && s["trackingNumber"].present? }
+    rescue RateLimitError
+      raise
     rescue StandardError => e
       Rails.logger.error("[Shipstation::Shipments] #{e.class}: #{e.message}")
       []
+    end
+
+  private
+
+    # Accumulates the "shipments" array across every page ShipStation returns.
+    def each_page(query)
+      results = []
+      page = 1
+      loop do
+        response = rate_limited_get("#{SHIPSTATION_API_BASE}/shipments", query: query.merge(page: page))
+        return results unless response.code == 200
+
+        body = JSON.parse(response.body)
+        results.concat(Array(body["shipments"]))
+        total_pages = body["pages"].to_i
+        break if total_pages <= page || body["shipments"].blank?
+
+        page += 1
+      end
+      results
     end
   end
 end

@@ -15,6 +15,9 @@ class SyncTrackingJob < ApplicationJob
   retry_on StandardError, attempts: 3, wait: 30.seconds
 
   BATCH_SIZE = 100
+  # Space out ShipStation calls to stay under its ~40 req/min/account cap. Zero
+  # in tests so the suite doesn't sleep.
+  THROTTLE_SECONDS = Rails.env.test? ? 0 : 2
 
   def perform
     discover_shipped_orders
@@ -25,13 +28,15 @@ private
 
   # Ask ShipStation which submitted orders have shipped and record the tracking
   # locally. A newly-SHIPPED order then flows into push_tracking_to_fluid below
-  # in this same run.
+  # in this same run. Throttled to respect the rate limit; if we still get
+  # rate-limited, stop this run (the rest are picked up next cycle).
   def discover_shipped_orders
     orders = ShipstationOrder.pollable_for_tracking.limit(BATCH_SIZE).includes(:company)
     discovered = 0
 
     orders.find_each do |order|
       shipments = Shipstation::Shipments.new(order.company_id).all_for_order(order.shipstation_order_id)
+      throttle
       next if shipments.empty?
 
       order.update!(
@@ -44,11 +49,18 @@ private
       Rails.logger.info(
         "[SyncTracking] Discovered #{shipments.size} shipment(s) for #{order.fluid_order_number}",
       )
+    rescue Shipstation::RateLimitError => e
+      Rails.logger.warn("[SyncTracking] Rate limited; stopping this run after #{discovered} discovered: #{e.message}")
+      break
     rescue StandardError => e
       Rails.logger.error("[SyncTracking] Discover failed for order #{order.fluid_order_number}: #{e.message}")
     end
 
     Rails.logger.info("[SyncTracking] Discovered #{discovered} newly-shipped orders")
+  end
+
+  def throttle
+    sleep(THROTTLE_SECONDS) if THROTTLE_SECONDS.positive?
   end
 
   def push_tracking_to_fluid
