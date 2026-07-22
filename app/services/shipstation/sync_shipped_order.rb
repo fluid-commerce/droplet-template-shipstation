@@ -140,7 +140,7 @@ module Shipstation
       fulfillment_response = fluid_commerce_order_service.order_fulfillment(
         id: fluid_order_id,
         order_items: order_items,
-        tracking_number: tracking_number,
+        tracking_informations: [ { tracking_number: tracking_number } ],
       )
       parsed_fulfillment_response = JSON.parse(fulfillment_response.body, symbolize_names: true)
 

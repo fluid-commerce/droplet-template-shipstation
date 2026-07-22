@@ -8,15 +8,17 @@ module FluidApi
         )
       end
 
-      def order_fulfillment(id:, order_items:, tracking_number:)
+      # tracking_informations: array of { tracking_number:, shipping_carrier: }
+      # (one per package). Fluid uses shipping_carrier to build a tracking URL.
+      def order_fulfillment(id:, order_items:, tracking_informations:)
         response = HTTParty.post(
           "#{FLUID_API_BASE_URL}/order_fulfillments",
           headers: headers,
-          body: order_fulfillment_body(id, order_items, tracking_number).to_json
+          body: order_fulfillment_body(id, order_items, tracking_informations).to_json
         )
       end
 
-      def order_fulfillment_body(id, order_items, tracking_number)
+      def order_fulfillment_body(id, order_items, tracking_informations)
         order_items = order_items.map do |item|
           { item_id: item[:id], quantity: item[:quantity] }
         end
@@ -24,11 +26,7 @@ module FluidApi
         {
           order_id: id,
           order_items: order_items,
-          tracking_informations: [
-            {
-              tracking_number: tracking_number,
-            },
-          ],
+          tracking_informations: tracking_informations,
         }
       end
     end

@@ -12,50 +12,54 @@ class Shipstation::ShipmentsTest < ActiveSupport::TestCase
     OpenStruct.new(code: 200, body: { "shipments" => shipments }.to_json)
   end
 
-  test "returns the first non-voided shipment carrying a tracking number" do
+  def all_for(order_id = "372209473")
+    Shipstation::Shipments.new(@company.id).all_for_order(order_id)
+  end
+
+  test "returns every non-voided shipment carrying a tracking number" do
     shipments = [
       { "trackingNumber" => nil, "voided" => false },
       { "trackingNumber" => "VOIDED1", "voided" => true },
-      { "trackingNumber" => "382763123186", "carrierCode" => "fedex", "voided" => false },
+      { "trackingNumber" => "TRK1", "carrierCode" => "fedex", "voided" => false },
+      { "trackingNumber" => "TRK2", "carrierCode" => "fedex", "voided" => false },
     ]
     HTTParty.stub(:get, ok(shipments)) do
-      result = Shipstation::Shipments.new(@company.id).latest_for_order("372209473")
-      _(result["trackingNumber"]).must_equal "382763123186"
+      _(all_for.map { |s| s["trackingNumber"] }).must_equal %w[TRK1 TRK2]
     end
   end
 
   test "queries ShipStation by orderId" do
     captured = nil
     HTTParty.stub(:get, ->(*_a, **kw) { captured = kw[:query]; ok([]) }) do
-      Shipstation::Shipments.new(@company.id).latest_for_order("372209473")
+      all_for
     end
     _(captured[:orderId]).must_equal "372209473"
   end
 
-  test "returns nil when no shipment has tracking yet" do
+  test "returns [] when no shipment has tracking yet" do
     HTTParty.stub(:get, ok([ { "trackingNumber" => nil, "voided" => false } ])) do
-      _(Shipstation::Shipments.new(@company.id).latest_for_order("372209473")).must_be_nil
+      _(all_for).must_equal []
     end
   end
 
-  test "returns nil without a ShipStation order id" do
-    _(Shipstation::Shipments.new(@company.id).latest_for_order(nil)).must_be_nil
+  test "returns [] without a ShipStation order id" do
+    _(all_for(nil)).must_equal []
   end
 
-  test "returns nil when credentials are missing" do
+  test "returns [] when credentials are missing" do
     @company.integration_setting.update!(settings: {})
-    _(Shipstation::Shipments.new(@company.id).latest_for_order("372209473")).must_be_nil
+    _(all_for).must_equal []
   end
 
-  test "returns nil on a non-200 response" do
+  test "returns [] on a non-200 response" do
     HTTParty.stub(:get, OpenStruct.new(code: 500, body: "err")) do
-      _(Shipstation::Shipments.new(@company.id).latest_for_order("372209473")).must_be_nil
+      _(all_for).must_equal []
     end
   end
 
-  test "returns nil when the request raises" do
+  test "returns [] when the request raises" do
     HTTParty.stub(:get, ->(*_a, **_k) { raise "boom" }) do
-      _(Shipstation::Shipments.new(@company.id).latest_for_order("372209473")).must_be_nil
+      _(all_for).must_equal []
     end
   end
 end

@@ -14,23 +14,25 @@ module Shipstation
       @api_secret = setting&.settings&.dig("api_secret")
     end
 
-    # The first non-voided shipment carrying a tracking number for a ShipStation
-    # order id, or nil when the order has not shipped (or on any failure).
-    def latest_for_order(shipstation_order_id)
-      return nil if shipstation_order_id.blank? || api_key.blank? || api_secret.blank?
+    # Every non-voided shipment carrying a tracking number for a ShipStation
+    # order id (an order can ship in several packages, each with its own
+    # tracking number). Returns [] when the order has not shipped or on any
+    # failure.
+    def all_for_order(shipstation_order_id)
+      return [] if shipstation_order_id.blank? || api_key.blank? || api_secret.blank?
 
       response = HTTParty.get("#{SHIPSTATION_API_BASE}/shipments",
         query: { orderId: shipstation_order_id },
         headers: headers)
-      return nil unless response.code == 200
+      return [] unless response.code == 200
 
       shipments = JSON.parse(response.body)["shipments"]
-      return nil unless shipments.is_a?(Array)
+      return [] unless shipments.is_a?(Array)
 
-      shipments.find { |s| !s["voided"] && s["trackingNumber"].present? }
+      shipments.select { |s| !s["voided"] && s["trackingNumber"].present? }
     rescue StandardError => e
       Rails.logger.error("[Shipstation::Shipments] #{e.class}: #{e.message}")
-      nil
+      []
     end
   end
 end
