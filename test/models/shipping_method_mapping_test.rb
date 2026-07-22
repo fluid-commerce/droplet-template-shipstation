@@ -23,6 +23,28 @@ describe ShippingMethodMapping do
     _(other).must_be :valid?
   end
 
+  it "rejects a carrier_code with no service_code (ShipStation requires both)" do
+    mapping = company.shipping_method_mappings.new(
+      fluid_shipping_title: "Ground Shipping",
+      carrier_code: "fedex",
+    )
+    _(mapping).wont_be :valid?
+    _(mapping.errors[:service_code]).must_include "can't be blank"
+  end
+
+  it "allows a carrier_code when a service_code is also set" do
+    mapping = company.shipping_method_mappings.new(
+      fluid_shipping_title: "Ground Shipping",
+      carrier_code: "fedex",
+      service_code: "fedex_2day",
+    )
+    _(mapping).must_be :valid?
+  end
+
+  it "allows a title with no codes at all" do
+    _(company.shipping_method_mappings.new(fluid_shipping_title: "Ground Shipping")).must_be :valid?
+  end
+
   describe "#any_code?" do
     it "is false with no codes" do
       _(ShippingMethodMapping.new.any_code?).must_equal false

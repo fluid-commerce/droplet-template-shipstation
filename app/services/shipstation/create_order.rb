@@ -107,18 +107,11 @@ module Shipstation
     end
 
     def submit_to_shipstation(ss_order)
-      order_response = create_order_in_shipstation
-      shipstation_order_id = order_response["orderId"]
+      response = create_order_in_shipstation
+      body = response.parsed_response
+      shipstation_order_id = body.is_a?(Hash) ? body["orderId"] : nil
 
-      unless shipstation_order_id.present?
-        ss_order.update!(
-          status: "FAILED",
-          last_error: "ShipStation returned no orderId",
-          last_error_at: Time.current,
-          retry_count: ss_order.retry_count + 1,
-        )
-        raise "Failed to create order in ShipStation: no orderId returned"
-      end
+      return record_submit_failure(ss_order, response) if shipstation_order_id.blank?
 
       # A concurrent shipment webhook may have already advanced this to SHIPPED;
       # don't regress a terminal status.
@@ -126,13 +119,50 @@ module Shipstation
         ss_order.update!(
           status: "SUBMITTED",
           shipstation_order_id: shipstation_order_id.to_s,
-          response_payload: order_response,
+          response_payload: body,
         )
       end
 
       sync_external_id_to_fluid(shipstation_order_id)
 
       Result.new(true, { shipstation_order_id: shipstation_order_id }, nil)
+    end
+
+    # ShipStation rejected the order (or returned no orderId). Record the failure
+    # with the real reason so it surfaces in the Activity tab, then decide whether
+    # to retry:
+    #   * 4xx (or a 2xx with no orderId) is a permanent data problem — a bad
+    #     serviceCode, missing field, etc. Retrying can't fix it, so we return a
+    #     failure Result WITHOUT raising. Raising would unwind through
+    #     WebhookEventJob's surrounding transaction and roll back this very FAILED
+    #     record (erasing the audit trail), and would burn all 5 job retries.
+    #   * 5xx is transient — raise so the job retries with backoff.
+    def record_submit_failure(ss_order, response)
+      detail = shipstation_error_detail(response)
+      ss_order.update!(
+        status: "FAILED",
+        last_error: detail,
+        last_error_at: Time.current,
+        retry_count: ss_order.retry_count + 1,
+      )
+      Rails.logger.error("[CreateOrder] #{params[:order_number]} rejected by ShipStation: #{detail}")
+
+      raise "ShipStation error submitting #{params[:order_number]}: #{detail}" if response.code.to_i >= 500
+
+      Result.new(false, nil, detail)
+    end
+
+    # Human-readable reason from a ShipStation response, e.g.
+    # "ShipStation 400: Invalid serviceCode".
+    def shipstation_error_detail(response)
+      body = response.parsed_response
+      message =
+        if body.is_a?(Hash)
+          body["Message"] || body["message"] || body["ExceptionMessage"] || body.to_json
+        else
+          body.to_s.presence || "no response body"
+        end
+      "ShipStation #{response.code}: #{message}".truncate(1000)
     end
 
     # Best-effort: the order is already in ShipStation, so a Fluid sync failure
@@ -241,12 +271,26 @@ module Shipstation
 
       fields = { requestedShippingService: title }
       mapping = company.shipping_method_mappings.find_by(fluid_shipping_title: title)
-      if mapping
-        fields[:carrierCode] = mapping.carrier_code if mapping.carrier_code.present?
-        fields[:serviceCode] = mapping.service_code if mapping.service_code.present?
-        fields[:packageCode] = mapping.package_code if mapping.package_code.present?
-      else
+      unless mapping
         Rails.logger.warn("[CreateOrder] no shipping mapping for #{title.inspect}")
+        return fields
+      end
+
+      # ShipStation rejects carrierCode unless a valid serviceCode rides with it
+      # ("Invalid serviceCode", HTTP 400), so send carrier+service only as a
+      # complete pair. A carrier without a service falls back to
+      # requestedShippingService alone — which ShipStation accepts (the order
+      # lands with no pre-assigned carrier) rather than failing the whole push.
+      if mapping.carrier_code.present? && mapping.service_code.present?
+        fields[:carrierCode] = mapping.carrier_code
+        fields[:serviceCode] = mapping.service_code
+        fields[:packageCode] = mapping.package_code if mapping.package_code.present?
+      elsif mapping.carrier_code.present?
+        Rails.logger.warn(
+          "[CreateOrder] mapping for #{title.inspect} has carrier " \
+          "#{mapping.carrier_code.inspect} but no service_code; sending " \
+          "requestedShippingService only (ShipStation requires carrier + service together)",
+        )
       end
       fields
     end

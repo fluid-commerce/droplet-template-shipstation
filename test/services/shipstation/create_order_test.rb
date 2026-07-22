@@ -38,7 +38,11 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
 
   def run_with_captured_body(params)
     captured = nil
-    HTTParty.stub(:post, ->(*args, **_kw) { captured = JSON.parse((args[1] || {})[:body]); { "orderId" => 42 } }) do
+    post = lambda do |*args, **_kw|
+      captured = JSON.parse((args[1] || {})[:body])
+      FakeResponse.new({ "orderId" => 42 })
+    end
+    HTTParty.stub(:post, post) do
       FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
         Shipstation::CreateOrder.new(params).call
       end
@@ -49,7 +53,7 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
   # Runs #call and reports whether an HTTP POST to ShipStation was attempted.
   def run_tracking_http(params)
     posted = false
-    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; { "orderId" => 42 } }) do
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; FakeResponse.new({ "orderId" => 42 }) }) do
       FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
         Shipstation::CreateOrder.new(params).call
       end
@@ -158,7 +162,7 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
   test "respect_hold false bypasses batching and submits immediately" do
     @company.integration_setting.update!(hold_for_batch: true, batch_window_minutes: 30)
     posted = false
-    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; { "orderId" => 42 } }) do
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; FakeResponse.new({ "orderId" => 42 }) }) do
       FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
         Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment"), respect_hold: false).call
       end
@@ -190,7 +194,7 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
 
     # Release uses the refreshed payload and actually submits.
     posted = false
-    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; { "orderId" => 42 } }) do
+    HTTParty.stub(:post, ->(*_a, **_k) { posted = true; FakeResponse.new({ "orderId" => 42 }) }) do
       FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
         payload = { "order" => order.request_payload, "company_id" => @company.fluid_company_id }
         Shipstation::CreateOrder.new(payload, respect_hold: false).call
@@ -202,7 +206,7 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
 
   test "a Fluid external-id sync failure does not fail or re-mark the order" do
     posted = 0
-    HTTParty.stub(:post, ->(*_a, **_k) { posted += 1; { "orderId" => 42 } }) do
+    HTTParty.stub(:post, ->(*_a, **_k) { posted += 1; FakeResponse.new({ "orderId" => 42 }) }) do
       FluidApi::V2::OrdersService.stub(:new, RaisingOrdersService.new) do
         Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment")).call
       end
@@ -236,5 +240,49 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     run_tracking_http(order_params(status: "awaiting_shipment", metadata: { "shipping" => { "title" => "Overnight" } }))
     _(@company.shipstation_orders.find_by(fluid_order_id: 555).status).must_equal "HELD"
     _(@company.seen_shipping_methods.find_by(fluid_shipping_title: "Overnight")).wont_be_nil
+  end
+
+  # -- carrier/service pairing + failure handling ---------------------------
+
+  test "drops a carrier with no service and sends requestedShippingService only" do
+    # A legacy/incomplete mapping (carrier, no service) that predates the model
+    # validation — the service must degrade gracefully rather than push a carrier
+    # ShipStation will reject.
+    mapping = @company.shipping_method_mappings.build(
+      fluid_shipping_title: "Ground Shipping",
+      carrier_code: "fedex",
+    )
+    mapping.save!(validate: false)
+    body = run_with_captured_body(
+      order_params(metadata: { "shipping" => { "title" => "Ground Shipping" } }),
+    )
+    _(body["requestedShippingService"]).must_equal "Ground Shipping"
+    _(body.key?("carrierCode")).must_equal false
+    _(body.key?("serviceCode")).must_equal false
+  end
+
+  test "a 4xx rejection records FAILED with the real reason and does not raise" do
+    result = nil
+    HTTParty.stub(:post, ->(*_a, **_k) { FakeResponse.new({ "Message" => "Invalid serviceCode" }, 400) }) do
+      FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
+        result = Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment")).call
+      end
+    end
+    _(result.success?).must_equal false
+    order = @company.shipstation_orders.find_by(fluid_order_id: 555)
+    _(order.status).must_equal "FAILED"
+    _(order.last_error).must_equal "ShipStation 400: Invalid serviceCode"
+    _(order.retry_count).must_equal 1
+  end
+
+  test "a 5xx failure raises so the job retries (transient, unlike a 4xx)" do
+    error = assert_raises(RuntimeError) do
+      HTTParty.stub(:post, ->(*_a, **_k) { FakeResponse.new({ "Message" => "server error" }, 500) }) do
+        FluidApi::V2::OrdersService.stub(:new, FakeOrdersService.new) do
+          Shipstation::CreateOrder.new(order_params(status: "awaiting_shipment")).call
+        end
+      end
+    end
+    _(error.message).must_include "ShipStation 500: server error"
   end
 end

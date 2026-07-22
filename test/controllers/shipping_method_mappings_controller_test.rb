@@ -40,17 +40,28 @@ describe ShippingMethodMappingsController do
   end
 
   it "creates a mapping" do
+    mapping = { fluid_shipping_title: "Ground", carrier_code: "ups", service_code: "ups_ground" }
     post shipping_method_mappings_url,
-      params: { dri: dri, shipping_method_mapping: { fluid_shipping_title: "Ground", carrier_code: "ups" } },
+      params: { dri: dri, shipping_method_mapping: mapping },
       headers: xhr_headers
     must_respond_with :created
     _(company.shipping_method_mappings.find_by(fluid_shipping_title: "Ground").carrier_code).must_equal "ups"
   end
 
-  it "upserts an existing mapping by title" do
-    company.shipping_method_mappings.create!(fluid_shipping_title: "Ground", carrier_code: "ups")
+  it "rejects a carrier with no service" do
     post shipping_method_mappings_url,
-      params: { dri: dri, shipping_method_mapping: { fluid_shipping_title: "Ground", carrier_code: "fedex" } },
+      params: { dri: dri, shipping_method_mapping: { fluid_shipping_title: "Ground", carrier_code: "ups" } },
+      headers: xhr_headers
+    must_respond_with :unprocessable_entity
+  end
+
+  it "upserts an existing mapping by title" do
+    company.shipping_method_mappings.create!(
+      fluid_shipping_title: "Ground", carrier_code: "ups", service_code: "ups_ground",
+    )
+    mapping = { fluid_shipping_title: "Ground", carrier_code: "fedex", service_code: "fedex_2day" }
+    post shipping_method_mappings_url,
+      params: { dri: dri, shipping_method_mapping: mapping },
       headers: xhr_headers
     must_respond_with :created
     _(company.shipping_method_mappings.where(fluid_shipping_title: "Ground").count).must_equal 1
