@@ -62,4 +62,43 @@ class Shipstation::ShipmentsTest < ActiveSupport::TestCase
       _(all_for).must_equal []
     end
   end
+
+  test "waits out a 429 and retries" do
+    calls = 0
+    get = lambda do |*_a, **_k|
+      calls += 1
+      if calls == 1
+        OpenStruct.new(code: 429, headers: { "Retry-After" => "1" }, body: "")
+      else
+        ok([ { "trackingNumber" => "T1", "voided" => false } ])
+      end
+    end
+    svc = Shipstation::Shipments.new(@company.id)
+    svc.stub(:pause, nil) do
+      HTTParty.stub(:get, get) do
+        _(svc.all_for_order("999").map { |s| s["trackingNumber"] }).must_equal [ "T1" ]
+      end
+    end
+    _(calls).must_equal 2
+  end
+
+  test "raises RateLimitError when 429 persists" do
+    svc = Shipstation::Shipments.new(@company.id)
+    svc.stub(:pause, nil) do
+      HTTParty.stub(:get, OpenStruct.new(code: 429, headers: {}, body: "")) do
+        assert_raises(Shipstation::RateLimitError) { svc.all_for_order("999") }
+      end
+    end
+  end
+
+  test "walks every result page" do
+    get = lambda do |*_a, **kw|
+      page = kw[:query][:page]
+      shipments = [ { "trackingNumber" => "T#{page}", "voided" => false } ]
+      OpenStruct.new(code: 200, body: { "shipments" => shipments, "pages" => 2 }.to_json)
+    end
+    HTTParty.stub(:get, get) do
+      _(all_for.map { |s| s["trackingNumber"] }).must_equal %w[T1 T2]
+    end
+  end
 end
