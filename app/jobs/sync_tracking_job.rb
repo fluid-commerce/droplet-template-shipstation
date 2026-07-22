@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
-# Cron job to retry syncing tracking info to Fluid for orders that
-# were shipped but failed to sync via the ShipStation webhook.
+# Recurring job that keeps Fluid's fulfillment/tracking in sync with ShipStation.
 #
-# Schedule via Solid Queue's recurring tasks or cron:
-#   SyncTrackingJob.perform_later
+# ShipStation does not push a shipment webhook to the droplet (none is
+# registered), so this job POLLS: it asks ShipStation whether each submitted
+# order has shipped, records the tracking locally, then pushes a fulfillment to
+# Fluid. It also retries the Fluid push for any order that has tracking but
+# whose earlier push failed.
+#
+# Schedule via Solid Queue's recurring tasks (config/recurring.yml).
 class SyncTrackingJob < ApplicationJob
   queue_as :default
 
@@ -13,9 +17,44 @@ class SyncTrackingJob < ApplicationJob
   BATCH_SIZE = 100
 
   def perform
+    discover_shipped_orders
+    push_tracking_to_fluid
+  end
+
+private
+
+  # Ask ShipStation which submitted orders have shipped and record the tracking
+  # locally. A newly-SHIPPED order then flows into push_tracking_to_fluid below
+  # in this same run.
+  def discover_shipped_orders
+    orders = ShipstationOrder.pollable_for_tracking.limit(BATCH_SIZE).includes(:company)
+    discovered = 0
+
+    orders.find_each do |order|
+      shipment = Shipstation::Shipments.new(order.company_id).latest_for_order(order.shipstation_order_id)
+      next unless shipment
+
+      order.update!(
+        status: "SHIPPED",
+        tracking_numbers: [ shipment["trackingNumber"] ].compact,
+        carrier: shipment["carrierCode"],
+        shipped_at: Time.current,
+      )
+      discovered += 1
+      Rails.logger.info(
+        "[SyncTracking] Discovered shipment for #{order.fluid_order_number}: #{shipment['trackingNumber']}",
+      )
+    rescue StandardError => e
+      Rails.logger.error("[SyncTracking] Discover failed for order #{order.fluid_order_number}: #{e.message}")
+    end
+
+    Rails.logger.info("[SyncTracking] Discovered #{discovered} newly-shipped orders")
+  end
+
+  def push_tracking_to_fluid
     orders = ShipstationOrder.needs_tracking_sync.limit(BATCH_SIZE).includes(:company)
 
-    Rails.logger.info("[SyncTracking] Found #{orders.count} orders to sync")
+    Rails.logger.info("[SyncTracking] Found #{orders.count} orders to sync to Fluid")
 
     synced = 0
     failed = 0
@@ -30,8 +69,6 @@ class SyncTrackingJob < ApplicationJob
 
     Rails.logger.info("[SyncTracking] Completed: #{synced} synced, #{failed} failed")
   end
-
-private
 
   def sync_order(order)
     authentication_token = order.company&.authentication_token

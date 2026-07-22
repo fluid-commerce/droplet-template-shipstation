@@ -43,3 +43,12 @@ pending_order:
   status: "PENDING"
   tracking_synced_to_fluid: false
   request_payload: { "id": 400, "order_number": "ORD-004" }
+
+submitted_order:
+  company: acme
+  fluid_order_id: 500
+  fluid_order_number: "ORD-005"
+  shipstation_order_id: "372209473"
+  status: "SUBMITTED"
+  tracking_synced_to_fluid: false
+  request_payload: { "id": 500, "order_number": "ORD-005" }

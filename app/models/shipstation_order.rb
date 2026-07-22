@@ -20,6 +20,15 @@ class ShipstationOrder < ApplicationRecord
       .where(created_at: 30.days.ago..)
   }
 
+  # Orders sent to ShipStation but not yet known to have shipped. The poll job
+  # queries ShipStation for these (ShipStation pushes no shipment webhook to us)
+  # to discover tracking. Bounded to 30 days so old stragglers stop being polled.
+  scope :pollable_for_tracking, -> {
+    where(status: "SUBMITTED")
+      .where.not(shipstation_order_id: [ nil, "" ])
+      .where(created_at: 30.days.ago..)
+  }
+
   scope :failed, -> { where(status: "FAILED") }
   scope :awaiting_payment, -> { where(status: "AWAITING_PAYMENT") }
   scope :held, -> { where(status: "HELD") }
