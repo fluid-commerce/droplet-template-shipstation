@@ -440,13 +440,18 @@ module Shipstation
     # A single human label for the ordered variant, or nil when the variant adds
     # nothing beyond the product name (e.g. single-variant products whose size is
     # already in the title).
+    # Fluid auto-creates a single "Default Variant" for products with no real
+    # options; it names no size and would just add noise on the packing slip.
+    IGNORED_VARIANT_LABELS = [ "default variant" ].freeze
+
     def variant_label(item)
       from_structured = Array(item[:ordered_variant]).filter_map { |o| o[:value].presence }.join(", ")
       return from_structured if from_structured.present?
 
       candidate = item.dig(:variant, :display_name).presence || item.dig(:variant, :title).presence
       product_name = item.dig(:product, :title).presence || item[:title]
-      return candidate if candidate.present? && candidate != product_name && candidate != item[:title]
+      return if candidate.blank? || IGNORED_VARIANT_LABELS.include?(candidate.downcase)
+      return candidate if candidate != product_name && candidate != item[:title]
 
       nil
     end

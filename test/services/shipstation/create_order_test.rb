@@ -214,6 +214,15 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     _(line["name"]).must_equal "Plain Product"
   end
 
+  test "ignores Fluid's Default Variant placeholder" do
+    line = item_line(
+      "id" => 1, "title" => "Order Protection",
+      "variant" => { "title" => "Default Variant" }, "product" => { "title" => "Order Protection" },
+    )
+    _(line.key?("options")).must_equal false
+    _(line["name"]).must_equal "Order Protection"
+  end
+
   # -- status gating / payment hold ----------------------------------------
 
   test "submits when status is awaiting_shipment" do
