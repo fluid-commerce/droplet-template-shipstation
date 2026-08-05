@@ -391,7 +391,7 @@ module Shipstation
         line = {
           lineItemKey: item[:id].to_s,
           sku: item[:sku],
-          name: item[:title],
+          name: item_name(item),
           imageUrl: item.dig(:product, :image_url),
           quantity: item[:quantity],
           unitPrice: item[:price],
@@ -400,10 +400,55 @@ module Shipstation
           fulfillmentSku: item.dig(:product, :sku),
           adjustment: false,
         }
+        options = item_options(item)
+        line[:options] = options if options.any?
         weight = item_weight(item)
         line[:weight] = weight if weight
         line
       end
+    end
+
+    # ShipStation prints line-item `options` (name/value pairs) on the packing
+    # slip, so warehouse staff see which variant/size to pick. Build them from
+    # the Fluid variant: structured option values when present (e.g.
+    # Size => Large), otherwise the variant's own title/name when it names a
+    # specific variant the product title doesn't already convey.
+    def item_options(item)
+      structured = Array(item[:ordered_variant]).filter_map do |opt|
+        value = opt[:value].presence
+        next unless value
+
+        { name: opt[:option_type].presence || "Variant", value: value }
+      end
+      return structured if structured.any?
+
+      label = variant_label(item)
+      label ? [ { name: "Variant", value: label } ] : []
+    end
+
+    # As a belt-and-suspenders for packing-slip templates that don't render
+    # options, fold the variant label into the item name when the name doesn't
+    # already contain it.
+    def item_name(item)
+      base = item[:title].to_s
+      label = variant_label(item)
+      return base if label.blank? || base.downcase.include?(label.downcase)
+
+      "#{base} — #{label}"
+    end
+
+    # A single human label for the ordered variant, or nil when the variant adds
+    # nothing beyond the product name (e.g. single-variant products whose size is
+    # already in the title).
+    def variant_label(item)
+      from_structured = Array(item[:ordered_variant]).filter_map { |o| o[:value].presence }.join(", ")
+      return from_structured if from_structured.present?
+
+      candidate = item.dig(:variant, :display_name).presence || item.dig(:variant, :title).presence
+      product_name = item.dig(:product, :title).presence || item[:title]
+      return candidate if candidate.present? && candidate != product_name && candidate != item[:title]
+
+      nil
     end
 
     # ShipStation weight object {value, units}. Fluid weights use kg/gm/lb/oz
