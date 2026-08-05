@@ -164,6 +164,56 @@ class Shipstation::CreateOrderTest < ActiveSupport::TestCase
     _(weight_of("id" => 1, "weight" => "0")).must_be_nil
   end
 
+  # -- packing-slip variant / options ---------------------------------------
+
+  def item_line(item)
+    @order_seq = (@order_seq || 554) + 1
+    body = run_with_captured_body(order_params_with_items([ item ], id: @order_seq))
+    body["items"][0]
+  end
+
+  test "sends structured variant options and enriches the name" do
+    line = item_line(
+      "id" => 1, "title" => "Peptide X",
+      "ordered_variant" => [ { "option_type" => "Size", "value" => "Large" } ],
+    )
+    _(line["options"]).must_equal [ { "name" => "Size", "value" => "Large" } ]
+    _(line["name"]).must_equal "Peptide X — Large"
+  end
+
+  test "falls back to the variant title when there are no structured options" do
+    line = item_line(
+      "id" => 1, "title" => "Selank / Semax",
+      "variant" => { "title" => "10mg" }, "product" => { "title" => "Selank / Semax" },
+    )
+    _(line["options"]).must_equal [ { "name" => "Variant", "value" => "10mg" } ]
+    _(line["name"]).must_equal "Selank / Semax — 10mg"
+  end
+
+  test "does not duplicate a variant already present in the name" do
+    line = item_line(
+      "id" => 1, "title" => "Selank / Semax (10mg)",
+      "variant" => { "title" => "10mg" }, "product" => { "title" => "Selank / Semax" },
+    )
+    _(line["options"]).must_equal [ { "name" => "Variant", "value" => "10mg" } ]
+    _(line["name"]).must_equal "Selank / Semax (10mg)"
+  end
+
+  test "omits options when the variant just repeats the product name" do
+    line = item_line(
+      "id" => 1, "title" => "TM (10mg)",
+      "variant" => { "title" => "TM (10mg)" }, "product" => { "title" => "TM (10mg)" },
+    )
+    _(line.key?("options")).must_equal false
+    _(line["name"]).must_equal "TM (10mg)"
+  end
+
+  test "omits options when the item has no variant" do
+    line = item_line("id" => 1, "title" => "Plain Product")
+    _(line.key?("options")).must_equal false
+    _(line["name"]).must_equal "Plain Product"
+  end
+
   # -- status gating / payment hold ----------------------------------------
 
   test "submits when status is awaiting_shipment" do
