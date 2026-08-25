@@ -31,7 +31,12 @@ const SHORT_MESSAGE = {
   h: { iv: "9HGKUhLFPQQ+YvUw", at: "AU8jH5oq6NHVd6+wlIzmDg==" },
 };
 
-/** 147 bytes — over the 140-byte threshold, so Rails deflates it and tags "c". */
+/**
+ * 147 bytes — over the 140-byte threshold, so Rails deflates it and tags "c".
+ *
+ * This vector is used to prove we can READ what Rails wrote. It is deliberately
+ * not used to prove we write the same bytes: see the note in the test below.
+ */
 const LONG_PLAINTEXT =
   '{"api_key":"KEY123","api_secret":"SEC456","v2_api_key":"TEST_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789padpadpadpad"}';
 const LONG_MESSAGE = {
@@ -54,7 +59,14 @@ describe("encryptMessage", () => {
   });
 
   it("deflates and tags anything over the 140-byte threshold, as Rails does", () => {
-    expect(encryptMessage(LONG_PLAINTEXT, key)).toEqual(LONG_MESSAGE);
+    const message = encryptMessage(LONG_PLAINTEXT, key);
+
+    expect(message.h.c).toBe(true);
+    // NOT compared byte-for-byte with Rails: DEFLATE output depends on the zlib
+    // build, so Ruby's bytes and Node's differ (and macOS's and Linux's differ
+    // from each other — CI caught exactly that). What has to hold is that the
+    // message is still readable, which is asserted below in both directions.
+    expect(decryptMessage(message, key)).toBe(LONG_PLAINTEXT);
   });
 
   it("is deterministic — the same clear text always gives the same message", () => {

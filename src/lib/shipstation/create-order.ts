@@ -128,11 +128,12 @@ export async function createShipstationOrder(
   try {
     // Serialize all decisions/writes for this one order so concurrent
     // order.created / order.updated / release-job invocations can't double-send.
-    return await withRowLock(local.id, async () => {
-      const fresh = await prisma.shipstationOrder.findUniqueOrThrow({
+    return await withRowLock(local.id, async (db) => {
+      const fresh = await db.shipstationOrder.findUniqueOrThrow({
         where: { id: local.id },
       });
       return decideAndProcess({
+        db,
         company,
         setting,
         order,
@@ -159,6 +160,12 @@ type Company = NonNullable<Awaited<ReturnType<typeof prisma.company.findFirst>>>
 type Setting = NonNullable<Awaited<ReturnType<typeof findIntegrationSetting>>>;
 
 interface Decision {
+  /**
+   * The transaction that holds this order's row lock. Every write below goes
+   * through it — a write on the global client would open a second connection
+   * and then block forever on the lock this transaction is holding.
+   */
+  db: Prisma.TransactionClient;
   company: Company;
   setting: Setting;
   order: FluidOrderPayload;
@@ -168,7 +175,7 @@ interface Decision {
 }
 
 async function decideAndProcess(context: Decision): Promise<CreateOrderResult> {
-  const { local, order, setting, respectHold } = context;
+  const { db, local, order, setting, respectHold } = context;
 
   // An order already in ShipStation: never blindly resubmit, but do propagate a
   // genuine Fluid-side edit (address/items/shipping method) as long as the order
@@ -180,7 +187,7 @@ async function decideAndProcess(context: Decision): Promise<CreateOrderResult> {
   // Hold unpaid orders instead of sending. An order.updated webhook releases
   // them (calls this again) once the status becomes fulfillable.
   if (String(order.status ?? "") === AWAITING_PAYMENT_STATUS) {
-    await prisma.shipstationOrder.update({
+    await db.shipstationOrder.update({
       where: { id: local.id },
       data: { status: "AWAITING_PAYMENT", lastError: null, lastErrorAt: null },
     });
@@ -252,7 +259,7 @@ function shippingSignature(payload: FluidOrderPayload) {
 }
 
 async function holdForBatch(context: Decision): Promise<void> {
-  const { local, order, setting } = context;
+  const { db, local, order, setting } = context;
 
   // Preserve an already-established batch deadline so repeated order.updated
   // events can't postpone the release indefinitely.
@@ -261,7 +268,7 @@ async function holdForBatch(context: Decision): Promise<void> {
       ? local.holdUntil
       : batchReleaseAt(setting);
 
-  await prisma.shipstationOrder.update({
+  await db.shipstationOrder.update({
     where: { id: local.id },
     data: {
       status: "HELD",
@@ -286,10 +293,11 @@ function batchReleaseAt(setting: Setting): Date | null {
 }
 
 async function submitToShipstation(context: Decision): Promise<CreateOrderResult> {
-  const { company, local, order, setting, shippingTitle } = context;
+  const { db, company, local, order, setting, shippingTitle } = context;
 
   const credentials = await credentialsFor(company.id);
   const payload = await buildShipstationPayload({
+    db,
     company,
     setting,
     order,
@@ -316,13 +324,13 @@ async function submitToShipstation(context: Decision): Promise<CreateOrderResult
       : undefined;
 
   if (shipstationOrderId === undefined || shipstationOrderId === null || shipstationOrderId === "") {
-    return recordSubmitFailure(local, response.status, body);
+    return recordSubmitFailure(db, local, response.status, body);
   }
 
   // A concurrent shipment webhook may have already advanced this to SHIPPED;
   // don't regress a terminal status.
   if (local.status !== "SHIPPED") {
-    await prisma.shipstationOrder.update({
+    await db.shipstationOrder.update({
       where: { id: local.id },
       data: {
         status: "SUBMITTED",
@@ -365,13 +373,14 @@ async function submitToShipstation(context: Decision): Promise<CreateOrderResult
  *   * 5xx is transient — throw, so the caller answers 500 and Fluid retries.
  */
 async function recordSubmitFailure(
+  db: Prisma.TransactionClient,
   local: ShipstationOrder,
   status: number,
   body: unknown,
 ): Promise<CreateOrderResult> {
   const detail = shipstationErrorDetail(status, body);
 
-  await prisma.shipstationOrder.update({
+  await db.shipstationOrder.update({
     where: { id: local.id },
     data: {
       status: "FAILED",
@@ -504,25 +513,43 @@ async function findOrCreateLocalOrder(
 }
 
 /**
- * `ShipstationOrder#with_lock` in Prisma: an interactive transaction whose
- * first statement takes a row lock, so a second webhook for the same order
- * blocks here rather than racing to submit it twice.
+ * `ShipstationOrder#with_lock` in Prisma: an interactive transaction whose first
+ * statement takes a row lock, so a second webhook for the same order blocks here
+ * rather than racing to submit it twice.
+ *
+ * The callback receives the transaction client and MUST use it for every write.
+ * A write on the global client would take a second connection and then wait on
+ * the very lock this transaction holds — a self-deadlock that only shows up
+ * under the concurrency the lock exists for.
+ *
+ * The timeout is raised well above Prisma's 5s default because the ShipStation
+ * call happens inside the lock, exactly as `with_lock` did in Rails. Holding a
+ * row lock across a network call is not lovely, but the alternative is a window
+ * in which two events both decide to submit.
  */
-async function withRowLock<T>(id: bigint, work: () => Promise<T>): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM shipstation_orders WHERE id = ${id} FOR UPDATE`;
-    return work();
-  });
+async function withRowLock<T>(
+  id: bigint,
+  work: (db: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT id FROM shipstation_orders WHERE id = ${id} FOR UPDATE`;
+      return work(tx);
+    },
+    { maxWait: 5_000, timeout: 60_000 },
+  );
 }
 
 // --- ShipStation payload ---------------------------------------------------
 
 async function buildShipstationPayload({
+  db,
   company,
   setting,
   order,
   shippingTitle,
 }: {
+  db: Prisma.TransactionClient;
   company: Company;
   setting: Setting;
   order: FluidOrderPayload;
@@ -555,7 +582,7 @@ async function buildShipstationPayload({
     taxAmount: order.tax,
     customerNotes: order.notes,
     internalNotes: order.notes,
-    ...(await shippingServiceFields(company.id, shippingTitle)),
+    ...(await shippingServiceFields(db, company.id, shippingTitle)),
     ...storeFields(setting),
   };
 }
@@ -577,6 +604,7 @@ function storeFields(setting: Setting): Record<string, unknown> {
  * when the admin has configured a mapping for the title.
  */
 async function shippingServiceFields(
+  db: Prisma.TransactionClient,
   companyId: bigint,
   title: string | null,
 ): Promise<Record<string, unknown>> {
@@ -584,7 +612,7 @@ async function shippingServiceFields(
 
   const fields: Record<string, unknown> = { requestedShippingService: title };
 
-  const mapping = await prisma.shippingMethodMapping.findFirst({
+  const mapping = await db.shippingMethodMapping.findFirst({
     where: { companyId, fluidShippingTitle: title },
   });
   if (!mapping) {
