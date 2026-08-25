@@ -74,8 +74,8 @@ logs:
 bundle:
 	@docker compose -f $(LOCAL_COMPOSE) run --rm $(SERVICE_NAME) bundle install -j4 --retry 3
 
-yarn:
-	@docker compose -f $(LOCAL_COMPOSE) run --rm $(SERVICE_NAME) yarn install
+pnpm:
+	@docker compose -f $(LOCAL_COMPOSE) run --rm $(SERVICE_NAME) pnpm install
 
 console:
 	@docker compose -f $(LOCAL_COMPOSE) run --rm $(SERVICE_NAME) rails console
@@ -112,6 +112,6 @@ build:
 install:
 	@make build
 	@make bundle
-	@make yarn
+	@make pnpm
 	@make db-prepare
 	@make stop
