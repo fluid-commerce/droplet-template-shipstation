@@ -1,6 +1,6 @@
 ARG RUBY_VERSION=3.4.2
 FROM ruby:$RUBY_VERSION
-ARG YARN_VERSION=4.7.0
+ARG PNPM_VERSION=10.17.1
 
 # Install dependencies
 RUN apt-get update -qq
@@ -13,7 +13,7 @@ RUN apt-get install --no-install-recommends -y \
     postgresql-client && \
     npm install -g corepack && \
     corepack enable && \
-    corepack prepare yarn@$YARN_VERSION --activate
+    corepack prepare pnpm@$PNPM_VERSION --activate
 
 WORKDIR /rails
 
@@ -27,8 +27,9 @@ COPY Gemfile Gemfile.lock ./
 RUN gem install bundler:2.6.5 && \
     bundle install
 
-# Yarn install
-COPY package.json yarn.lock .yarnrc.yml ./
+# JavaScript dependencies (pnpm — see the note in docker/Dockerfile)
+COPY package.json pnpm-lock.yaml ./
+COPY vendor/droplet-sdk ./vendor/droplet-sdk
 
 # Add binstubs to PATH
 ENV PATH="/rails/bin:${PATH}"

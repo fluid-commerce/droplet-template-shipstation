@@ -1,0 +1,330 @@
+// droplet-template-shipstation — Prisma schema
+//
+// This schema describes the SAME PostgreSQL database the Rails app owns
+// (db/schema.rb, version 2026_07_22_000002). Every model is mapped back to the
+// Rails table and column names with @@map / @map so that pointing this app at
+// an existing production database changes nothing about it.
+//
+// Consequences of that, which are deliberate and should not be "tidied":
+//
+//   * Primary keys are `BigInt`, because Rails 8 creates `bigserial` ids.
+//     They surface in TypeScript as `bigint`; convert with `String(id)` before
+//     handing one to a client component or to JSON.
+//   * `events.status` is a plain integer, because ActiveRecord's `enum` stores
+//     an integer. See EVENT_STATUS in src/lib/types.
+//   * `users.permission_sets` is a Postgres text[], because Rails declared
+//     `t.string array: true`.
+//   * Nullability and indexes mirror db/schema.rb exactly. In particular
+//     `companies.fluid_company_id` and `companies.company_droplet_uuid` are
+//     NOT unique, so they are looked up with findFirst, never findUnique.
+//
+// The one table that is NOT in db/schema.rb is FluidCallbackRegistration. It is
+// owned by @fluid-studios/droplet-sdk and is additive — the Rails app neither
+// reads nor writes it, so both apps can run against this database at once.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Rails: `companies`. One row per Fluid company that installed this droplet.
+model Company {
+  id BigInt @id @default(autoincrement())
+
+  fluidShop                String    @map("fluid_shop")
+  authenticationToken      String    @unique @map("authentication_token")
+  name                     String
+  settings                 Json?     @default("{}")
+  webhookVerificationToken String?   @map("webhook_verification_token")
+  fluidCompanyId           BigInt    @map("fluid_company_id")
+  serviceCompanyId         String?   @map("service_company_id")
+  companyDropletUuid       String?   @map("company_droplet_uuid")
+  active                   Boolean   @default(false)
+  uninstalledAt            DateTime? @map("uninstalled_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  dropletInstallationUuid String? @map("droplet_installation_uuid")
+
+  /// Fluid `cbr_` uuids of the callback registrations created for this company
+  /// at install time. Rails stored this as jsonb defaulting to [].
+  installedCallbackIds Json? @default("[]") @map("installed_callback_ids")
+
+  events                 Event[]
+  integrationSetting     IntegrationSetting?
+  shipstationOrders      ShipstationOrder[]
+  shippingMethodMappings ShippingMethodMapping[]
+  seenShippingMethods    SeenShippingMethod[]
+
+  @@index([active])
+  @@index([companyDropletUuid])
+  @@index([fluidCompanyId])
+  @@index([fluidShop])
+  @@map("companies")
+}
+
+/// Rails: `callbacks`. The droplet's local catalogue of Fluid callback
+/// definitions, synced from GET /api/callback/definitions. A row is only
+/// registered with Fluid on install when it is `active` and has a url+timeout.
+model Callback {
+  id BigInt @id @default(autoincrement())
+
+  name             String?
+  description      String?
+  url              String?
+  timeoutInSeconds Int?     @map("timeout_in_seconds")
+  active           Boolean?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("callbacks")
+}
+
+/// Rails: `events`. Audit trail of webhook events, scoped to a company.
+///
+/// NOTE: nothing in the Rails app reads or writes this table — `Event` is a
+/// model with validations and no call sites. It is mapped here so a droplet
+/// forked from this template can start using it without a migration, and so
+/// that `companies` keeps the foreign key that stops a company row being
+/// deleted out from under existing rows.
+model Event {
+  id BigInt @id @default(autoincrement())
+
+  identifier String?
+  name       String?
+  payload    Json?     @default("{}")
+  timestamp  DateTime?
+  /// ActiveRecord enum: 0 pending, 1 processed, 2 failed.
+  status     Int?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId BigInt  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([identifier])
+  @@index([name])
+  @@map("events")
+}
+
+/// Rails: `integration_settings`. One row per company, holding that company's
+/// ShipStation credentials and per-company behaviour (batching, API version,
+/// store assignment).
+///
+/// `settings` is NOT plain JSON. The Rails model declares
+/// `encrypts :settings, deterministic: true`, so the column holds an Active
+/// Record Encryption envelope. Read and write it through
+/// src/lib/rails/encrypted-attribute.ts, never directly — see the notes there.
+model IntegrationSetting {
+  id BigInt @id @default(autoincrement())
+
+  companyId   BigInt  @unique @map("company_id")
+  enabled     Boolean @default(false)
+  /// Active Record Encryption envelope. See src/lib/rails/encrypted-attribute.ts.
+  settings    Json?   @default("{}")
+  credentials Json?   @default("{}")
+
+  /// Hold new orders instead of pushing them to ShipStation immediately.
+  holdForBatch Boolean @default(false) @map("hold_for_batch")
+  /// null = manual release only; a positive number auto-releases after N minutes.
+  batchWindowMinutes Int? @map("batch_window_minutes")
+  /// "v1" (ssapi.shipstation.com, key+secret) or "v2" (api.shipstation.com, single key).
+  apiVersion String @default("v1") @map("api_version")
+  /// ShipStation storeId to assign orders to; blank = the API key's default store.
+  storeId String? @map("store_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("integration_settings")
+}
+
+/// Rails: `settings`. Droplet-wide configuration, each row a JSON Schema plus
+/// the values validated against it. See src/lib/settings.
+model Setting {
+  id BigInt @id @default(autoincrement())
+
+  name        String  @unique
+  description String?
+  values      Json?   @default("{}")
+  schema      Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+/// Rails: `users`, created by Devise. `encrypted_password` is a bcrypt digest
+/// and Auth.js verifies it directly, so existing rows keep working unchanged.
+model User {
+  id BigInt @id @default(autoincrement())
+
+  email             String @unique @default("")
+  encryptedPassword String @default("") @map("encrypted_password")
+
+  resetPasswordToken  String?   @unique @map("reset_password_token")
+  resetPasswordSentAt DateTime? @map("reset_password_sent_at")
+  rememberCreatedAt   DateTime? @map("remember_created_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Rails `t.string array: true` — a Postgres text[].
+  permissionSets String[] @default([]) @map("permission_sets")
+
+  @@map("users")
+}
+
+/// Rails: `webhooks`. A catalogue row per webhook subscription this droplet
+/// knows about.
+///
+/// Unused by the Rails app as well — the webhooks that actually exist are
+/// declared in src/lib/config/droplet.config.ts, and the two droplet-level ones
+/// have their Fluid ids stored in the `fluid_webhook` settings row. Mapped so
+/// the table is accounted for.
+model Webhook {
+  id BigInt @id @default(autoincrement())
+
+  resource String?
+  event    String?
+  active   Boolean? @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("webhooks")
+}
+
+/// Rails: `shipstation_orders`. This droplet's record of every Fluid order it
+/// has seen, and where that order currently stands in ShipStation.
+///
+/// `status` is the droplet's own lifecycle, not ShipStation's — see
+/// src/lib/orders.ts. SUBMITTED and SHIPPED both mean "it is in ShipStation",
+/// which is what stops a repeated order.updated from re-sending one.
+model ShipstationOrder {
+  id BigInt @id @default(autoincrement())
+
+  companyId BigInt  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  fluidOrderId     BigInt @map("fluid_order_id")
+  fluidOrderNumber String @map("fluid_order_number")
+
+  shipstationOrderId  String? @map("shipstation_order_id")
+  shipstationOrderKey String? @map("shipstation_order_key")
+
+  status String @default("PENDING")
+
+  lastError   String?   @map("last_error")
+  lastErrorAt DateTime? @map("last_error_at")
+  retryCount  Int       @default(0) @map("retry_count")
+
+  /// One per package: an order can ship in several, each with its own number.
+  trackingNumbers String[] @default([]) @map("tracking_numbers")
+  carrier         String?
+  trackingUrl     String?  @map("tracking_url")
+  shippedAt       DateTime? @map("shipped_at")
+
+  trackingSyncedToFluid Boolean   @default(false) @map("tracking_synced_to_fluid")
+  trackingSyncedAt      DateTime? @map("tracking_synced_at")
+
+  /// Exactly what we last sent to ShipStation, so a later order.updated can tell
+  /// whether the order actually changed.
+  requestPayload  Json? @default("{}") @map("request_payload")
+  responsePayload Json? @default("{}") @map("response_payload")
+
+  /// When a batch-held order becomes due. null = hold until released by hand.
+  holdUntil DateTime? @map("hold_until")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, fluidOrderId], map: "index_ss_orders_on_company_and_fluid_order_id")
+  @@index([companyId])
+  @@index([fluidOrderId])
+  @@index([fluidOrderNumber])
+  @@index([shipstationOrderId])
+  @@index([status, holdUntil], map: "index_ss_orders_on_status_and_hold_until")
+  @@index([status, trackingSyncedToFluid], map: "index_ss_orders_on_status_and_sync")
+  @@index([status])
+  @@map("shipstation_orders")
+}
+
+/// Rails: `shipping_method_mappings`. Maps a Fluid order's shipping method title
+/// (e.g. "Ground Shipping") to the ShipStation carrier/service/package codes
+/// requested when the order is pushed. One row per (company, title).
+model ShippingMethodMapping {
+  id BigInt @id @default(autoincrement())
+
+  companyId BigInt  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  fluidShippingTitle String  @map("fluid_shipping_title")
+  carrierCode        String? @map("carrier_code")
+  serviceCode        String? @map("service_code")
+  packageCode        String? @map("package_code")
+  description        String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, fluidShippingTitle], map: "index_ship_method_maps_on_company_and_title")
+  @@index([companyId])
+  @@map("shipping_method_mappings")
+}
+
+/// Rails: `seen_shipping_methods`. Every distinct shipping method title observed
+/// on incoming orders, so the admin can see which titles still need a mapping.
+/// Recording is best-effort and must never block order processing.
+model SeenShippingMethod {
+  id BigInt @id @default(autoincrement())
+
+  companyId BigInt  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  fluidShippingTitle String   @map("fluid_shipping_title")
+  seenCount          Int      @default(1) @map("seen_count")
+  lastSeenAt         DateTime @map("last_seen_at")
+  exampleOrderNumber String?  @map("example_order_number")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, fluidShippingTitle], map: "index_seen_ship_methods_on_company_and_title")
+  @@index([companyId])
+  @@map("seen_shipping_methods")
+}
+
+// ---------------------------------------------------------------------------
+// Owned by @fluid-studios/droplet-sdk. Copied verbatim from
+// vendor/droplet-sdk/schema/callback-registrations.prisma — keep it identical
+// across the fleet so the shape survives the eventual Prisma -> Drizzle move.
+//
+// Only the digest is stored: Fluid presents the plaintext token on every
+// request, so a digest is enough to locate the registration, and a database
+// dump then yields no working callback credentials.
+// ---------------------------------------------------------------------------
+model FluidCallbackRegistration {
+  uuid           String @id
+  dri            String
+  definitionName String @map("definition_name")
+  tokenDigest    String @unique @map("token_digest")
+  url            String
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([dri])
+  @@map("fluid_callback_registrations")
+}
