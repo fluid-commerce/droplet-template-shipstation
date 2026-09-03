@@ -58,6 +58,17 @@ describe("POST /api/webhooks/shipped", () => {
     expect(response.status).toBe(202);
   });
 
+  it("rejects a non-numeric company_id instead of raising", async () => {
+    // Reached before authentication, so an unhandled BigInt() SyntaxError here
+    // would be an unauthenticated 500.
+    const response = await POST(
+      request({ resource_url: GOOD_URL, company_id: "not-a-number" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(syncShipped).not.toHaveBeenCalled();
+  });
+
   it("refuses a request with no token", async () => {
     const response = await POST(request({ resource_url: GOOD_URL, company_id: 42 }, {}));
 

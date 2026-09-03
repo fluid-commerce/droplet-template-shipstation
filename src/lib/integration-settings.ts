@@ -36,27 +36,62 @@ export const SECRET_KEYS: Array<keyof ShipstationSecrets> = [
 ];
 
 /**
+ * Raised when `settings` holds an Active Record envelope that will not decrypt.
+ *
+ * This is deliberately NOT swallowed into `{}`. A wrong or rotated encryption
+ * key, or a damaged envelope, is not the same thing as "this company has not
+ * configured ShipStation yet", and treating it as the latter is how a sibling
+ * droplet 401'd every tenant at once without raising. It is worse than that
+ * here: `saveIntegrationSetting` merges the new secrets onto whatever it read,
+ * so an unreadable row that reads as `{}` would be REWRITTEN as `{}` by the
+ * next batching- or store-only save, destroying the stored credentials for
+ * good. Rails raises on an unauthenticatable ciphertext; so does this.
+ */
+export class SettingsDecryptionError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "integration_settings.settings could not be decrypted: " +
+        (cause instanceof Error ? cause.message : String(cause)),
+    );
+    this.name = "SettingsDecryptionError";
+  }
+}
+
+/**
  * Decrypts a row's `settings`.
  *
  * Tolerates a plaintext object as well, because a row written before the Rails
  * app turned encryption on — or by a developer with `bin/rails db` — is still a
  * usable row and refusing to read it would take a company's integration down.
+ *
+ * Throws SettingsDecryptionError when the value IS an Active Record envelope
+ * and cannot be read. An absent row, or an absent/empty column, is still `{}`:
+ * that genuinely means "not configured".
  */
 export function secretsOf(setting: Pick<IntegrationSetting, "settings"> | null): ShipstationSecrets {
   const raw = setting?.settings;
   if (!raw) return {};
 
   if (isEncryptedMessage(raw)) {
+    let plaintext: string;
     try {
-      const parsed: unknown = JSON.parse(decryptMessage(raw));
-      return parsed && typeof parsed === "object" ? (parsed as ShipstationSecrets) : {};
+      plaintext = decryptMessage(raw);
     } catch (error) {
       console.error(
         "[IntegrationSettings] Could not decrypt settings:",
         error instanceof Error ? error.message : error,
       );
-      return {};
+      throw new SettingsDecryptionError(error);
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(plaintext);
+    } catch (error) {
+      throw new SettingsDecryptionError(error);
+    }
+
+    return parsed && typeof parsed === "object" ? (parsed as ShipstationSecrets) : {};
   }
 
   return typeof raw === "object" ? (raw as ShipstationSecrets) : {};
@@ -132,6 +167,9 @@ export async function saveIntegrationSetting(
   }
   if (errors.length > 0) throw new IntegrationSettingValidationError(errors);
 
+  // Reads the stored secrets before merging. If the column will not decrypt
+  // this THROWS and the write never happens — the alternative is merging onto
+  // `{}` and persisting an empty envelope over the real credentials.
   const merged = { ...secretsOf(existing) };
   for (const key of SECRET_KEYS) {
     const value = patch.secrets?.[key];

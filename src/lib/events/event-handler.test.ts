@@ -17,7 +17,19 @@ describe("routeEvent", () => {
     registerHandler("droplet.installed", handler);
 
     await expect(routeEvent("droplet.installed", { a: 1 })).resolves.toBe(true);
-    expect(handler).toHaveBeenCalledWith({ a: 1 });
+    expect(handler).toHaveBeenCalledWith({ a: 1 }, undefined);
+  });
+
+  it("passes the verified principal through to the handler", async () => {
+    // The handler decides which tenant's credentials get used, so it needs the
+    // company the signature verified against — not only the body.
+    const handler = vi.fn(async () => {});
+    const principal = { id: 1n, fluidCompanyId: 42n };
+    registerHandler("order.created", handler);
+
+    await routeEvent("order.created", { a: 1 }, undefined, principal);
+
+    expect(handler).toHaveBeenCalledWith({ a: 1 }, principal);
   });
 
   it("prefers a versioned handler and falls back to the unversioned one", async () => {

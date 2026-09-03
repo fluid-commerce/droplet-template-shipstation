@@ -23,11 +23,32 @@ process.env.ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT =
 
 const {
   IntegrationSettingValidationError,
+  SettingsDecryptionError,
   encodeSecrets,
   isSandboxKey,
   saveIntegrationSetting,
   secretsOf,
 } = await import("./integration-settings");
+
+/**
+ * A well-formed Active Record envelope this key cannot open — what a rotated
+ * or wrong ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY produces.
+ */
+const undecryptable = () => ({
+  id: 7n,
+  companyId: 1n,
+  settings: {
+    p: Buffer.from("not really ciphertext").toString("base64"),
+    h: {
+      iv: Buffer.alloc(12).toString("base64"),
+      at: Buffer.alloc(16).toString("base64"),
+    },
+  } as unknown as Prisma.JsonValue,
+  holdForBatch: false,
+  batchWindowMinutes: null,
+  apiVersion: "v1",
+  storeId: null,
+});
 
 const stored = (secrets: Record<string, string>) => ({
   id: 7n,
@@ -62,8 +83,14 @@ describe("secretsOf", () => {
     expect(secretsOf({ settings: { api_key: "KEY" } })).toEqual({ api_key: "KEY" });
   });
 
-  it("is empty rather than throwing for a row it cannot read", () => {
+  it("is empty for a company that has no settings row at all", () => {
     expect(secretsOf(null)).toEqual({});
+  });
+
+  it("throws on an envelope it cannot decrypt, instead of reading it as empty", () => {
+    // "{}" here would be indistinguishable from "not configured yet", which is
+    // how a sibling droplet took every tenant offline without raising.
+    expect(() => secretsOf(undecryptable())).toThrow(SettingsDecryptionError);
   });
 });
 
@@ -109,6 +136,19 @@ describe("saveIntegrationSetting", () => {
 
     expect(mockPrisma.integrationSetting.create).toHaveBeenCalled();
     expect(written()).toEqual({ api_key: "KEY" });
+  });
+
+  it("refuses to write when the stored secrets cannot be decrypted", async () => {
+    // Otherwise the merge starts from {} and this store-only save persists an
+    // empty envelope over the company's real ShipStation credentials.
+    mockPrisma.integrationSetting.findUnique.mockResolvedValue(undecryptable());
+
+    await expect(saveIntegrationSetting(1n, { storeId: "12345" })).rejects.toBeInstanceOf(
+      SettingsDecryptionError,
+    );
+
+    expect(mockPrisma.integrationSetting.update).not.toHaveBeenCalled();
+    expect(mockPrisma.integrationSetting.create).not.toHaveBeenCalled();
   });
 
   it("clears the store on a blank selection so orders use the default", async () => {

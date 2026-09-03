@@ -154,11 +154,24 @@ describe("never modifying a labeled order", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it("leaves an unchanged submitted order alone without even asking", async () => {
+  it("leaves an unchanged submitted order alone even when jsonb reordered the keys", async () => {
+    // `request_payload` comes back through a Postgres jsonb column, which
+    // stores keys sorted by length then bytes — never in Fluid's wire order.
+    // Comparing the two with plain JSON.stringify made every order.updated on a
+    // SUBMITTED order look changed and re-pushed it to ShipStation.
+    const reordered = {
+      ...ORDER,
+      ship_to: {
+        city: ORDER.ship_to.city,
+        name: ORDER.ship_to.name,
+        state: ORDER.ship_to.state,
+        address1: ORDER.ship_to.address1,
+      },
+    };
     const existing = localOrder({
       status: "SUBMITTED",
       shipstationOrderId: "987",
-      requestPayload: ORDER,
+      requestPayload: reordered,
     });
     mockPrisma.shipstationOrder.findUnique.mockResolvedValue(existing);
     mockPrisma.shipstationOrder.findUniqueOrThrow.mockResolvedValue(existing);

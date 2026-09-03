@@ -60,8 +60,18 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: "invalid resource_url" }, { status: 400 });
   }
 
+  // BigInt() throws a SyntaxError on anything non-numeric, and this is reached
+  // before authentication — an unsigned "company_id": "abc" would otherwise be
+  // an unhandled 500 rather than a rejected request.
+  let fluidCompanyId: bigint;
+  try {
+    fluidCompanyId = BigInt(companyId);
+  } catch {
+    return NextResponse.json({ error: "invalid company_id" }, { status: 400 });
+  }
+
   const company = await prisma.company.findFirst({
-    where: { fluidCompanyId: BigInt(companyId) },
+    where: { fluidCompanyId },
   });
 
   if (!authorized(request, company?.webhookVerificationToken ?? null)) {

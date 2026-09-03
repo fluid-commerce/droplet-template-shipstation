@@ -83,7 +83,7 @@ export const POST = withFluidWebhook(
     },
   },
 
-  async ({ event, payload }) => {
+  async ({ event, payload, principal }) => {
     console.log(`[Webhook] Received: ${event}`);
 
     // Rails answered 204 when nothing was registered for the event, and 202
@@ -95,7 +95,12 @@ export const POST = withFluidWebhook(
     }
 
     try {
-      const handled = await routeEvent(event, payload);
+      // `principal` is the tenant the signature actually verified against.
+      // Handlers must resolve the company from it, never from a body field:
+      // the body is attacker-controlled, and a payload naming a DIFFERENT
+      // company than the one whose secret signed it would otherwise be
+      // processed with that other tenant's ShipStation and Fluid credentials.
+      const handled = await routeEvent(event, payload, undefined, principal);
       return new NextResponse(null, { status: handled ? 202 : 204 });
     } catch (error) {
       // The payload is never logged here: it carries authentication_token and

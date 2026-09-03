@@ -31,6 +31,22 @@ export interface FluidOrder {
   error?: unknown;
 }
 
+/**
+ * Ruby's `blank?`, which is what the Rails services these port from actually
+ * tested. It matters: Rails treated `{}` and `[]` as a FAILED Fluid call and
+ * raised, while JS truthiness treats both as success. Without this, a Fluid
+ * endpoint answering `{}` — which a 5xx behind a proxy commonly does — reads as
+ * a completed fulfillment, `tracking_synced_to_fluid` is set, and the order is
+ * never retried even though Fluid recorded nothing.
+ */
+function isBlank(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value).length === 0;
+  return false;
+}
+
 /** GET /api/v202506/orders/:id */
 export async function retrieveOrder(
   companyToken: string,
@@ -44,7 +60,8 @@ export async function retrieveOrder(
   if (!text) return null;
 
   const parsed = JSON.parse(text) as FluidOrder;
-  return parsed?.error ? null : parsed;
+  // Rails: `return nil if parsed.blank? || parsed[:error]`.
+  return isBlank(parsed) || parsed?.error ? null : parsed;
 }
 
 export interface TrackingInformation {
@@ -87,7 +104,8 @@ export async function createOrderFulfillment(
   const text = await response.text();
   const parsed: unknown = text ? JSON.parse(text) : null;
 
-  if (!parsed || (typeof parsed === "object" && "error" in parsed)) {
+  // Rails: `raise if parsed.blank? || parsed[:error]`.
+  if (isBlank(parsed) || (typeof parsed === "object" && parsed !== null && "error" in parsed)) {
     throw new Error(
       `Failed to fulfill order ${id} in Fluid: ${JSON.stringify(parsed)}`,
     );

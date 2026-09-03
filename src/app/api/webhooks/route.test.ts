@@ -139,6 +139,24 @@ describe("POST /api/webhooks", () => {
     expect(handleOrderCreated).toHaveBeenCalledOnce();
   });
 
+  it("hands the handler the VERIFIED company, not just the body", async () => {
+    // Without this the handler resolves the tenant from a body field, and a
+    // request signed with company A's secret can name company B and be
+    // processed with B's ShipStation and Fluid credentials.
+    const company = companyFixture();
+    mockPrisma.company.findFirst.mockResolvedValue(company);
+
+    const body = {
+      resource: "order",
+      event: "created",
+      company: { droplet_installation_uuid: "dri_acme" },
+      order: { id: 1 },
+    };
+    await POST(signedWebhookRequest({ secret: "wvt_acme", body }));
+
+    expect(handleOrderCreated).toHaveBeenCalledWith(body, company);
+  });
+
   it("answers 204 for a verified event nothing is registered for", async () => {
     mockPrisma.company.findFirst.mockResolvedValue(companyFixture());
 

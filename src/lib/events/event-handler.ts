@@ -21,7 +21,15 @@
  * non-lifecycle events. That is a per-event decision, not a global one.
  */
 
-export type EventHandler = (payload: unknown) => Promise<void>;
+/**
+ * A handler receives the raw webhook body and the tenant the SDK actually
+ * VERIFIED the signature against. The second argument is what makes a handler
+ * tenant-safe: the body is attacker-controlled, the principal is not.
+ */
+export type EventHandler = (
+  payload: unknown,
+  principal?: unknown,
+) => Promise<void>;
 
 const eventHandlers = new Map<string, EventHandler>();
 
@@ -55,6 +63,7 @@ export async function routeEvent(
   eventType: string,
   payload: unknown,
   version?: string,
+  principal?: unknown,
 ): Promise<boolean> {
   const key = keyFor(eventType, version);
   const handler = eventHandlers.get(key) ?? eventHandlers.get(eventType);
@@ -64,7 +73,7 @@ export async function routeEvent(
     return false;
   }
 
-  await handler(payload);
+  await handler(payload, principal);
   console.log(`[EventHandler] Successfully handled event: ${key}`);
   return true;
 }

@@ -14,6 +14,7 @@
 import type { FluidClient } from "@/lib/fluid";
 import type { DropletConfig } from "./schema";
 import { filterEnabled } from "./schema";
+import { webhookUrl } from "./registration-service";
 
 export type CleanupResults = {
   webhooks: { success: number; failed: number };
@@ -38,9 +39,22 @@ async function cleanupWebhooks(
     return results;
   }
 
+  const ourUrl = webhookUrl();
+
   for (const wanted of enabled) {
     const matching = webhooks.filter(
-      (w) => w.resource === wanted.resource && w.event === wanted.event,
+      (w) =>
+        w.resource === wanted.resource &&
+        w.event === wanted.event &&
+        // Resource+event alone is NOT ownership. Fluid's listing is scoped to
+        // the COMPANY, not to this droplet, so `order.created` in it may be
+        // another installed droplet's subscription — deleting that on our
+        // uninstall would silently stop their orders. The callback cleanup
+        // already avoids exactly this mistake by deleting recorded uuids; the
+        // closest webhook equivalent is an exact URL match. Rails deleted no
+        // webhooks at all on uninstall, so refusing to delete an unmatched one
+        // is also the more faithful behaviour.
+        sameUrl(w.url, ourUrl),
     );
     for (const webhook of matching) {
       try {
@@ -57,6 +71,12 @@ async function cleanupWebhooks(
   }
 
   return results;
+}
+
+/** Compares two webhook URLs, ignoring a trailing slash. */
+function sameUrl(candidate: string | undefined, ours: string | null): boolean {
+  if (!ours || !candidate) return false;
+  return candidate.replace(/\/$/, "") === ours;
 }
 
 export async function cleanupAllFeatures(

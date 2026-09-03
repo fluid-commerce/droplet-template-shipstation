@@ -13,6 +13,17 @@ import type { FluidClient } from "@/lib/fluid";
 import type { DropletConfig, WebhookConfig } from "./schema";
 import { filterEnabled } from "./schema";
 
+/**
+ * The URL this droplet registers its per-company webhooks at.
+ *
+ * Shared with the cleanup service, which uses it to tell OUR subscriptions
+ * apart from another droplet's in the company-scoped listing.
+ */
+export function webhookUrl(): string | null {
+  const base = process.env.FLUID_DROPLET_URL;
+  return base ? `${base.replace(/\/$/, "")}/api/webhooks` : null;
+}
+
 export type RegistrationResults = {
   webhooks: {
     success: number;
@@ -37,7 +48,7 @@ async function registerWebhooks(
       await client.createWebhook({
         resource: webhook.resource,
         event: webhook.event,
-        url: `${process.env.FLUID_DROPLET_URL}/api/webhooks`,
+        url: webhookUrl() ?? "",
         auth_token: authToken,
         http_method: "post",
         active: true,

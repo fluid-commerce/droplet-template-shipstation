@@ -240,9 +240,35 @@ async function reconcileSubmitted(context: Decision): Promise<CreateOrderResult>
 function orderContentChanged(order: FluidOrderPayload, local: ShipstationOrder): boolean {
   const previous = (local.requestPayload ?? {}) as unknown as FluidOrderPayload;
   return (
-    JSON.stringify(shippingSignature(order)) !==
-    JSON.stringify(shippingSignature(previous))
+    canonical(shippingSignature(order)) !== canonical(shippingSignature(previous))
   );
+}
+
+/**
+ * JSON with object keys in a fixed order.
+ *
+ * Rails compared two Ruby Hashes, and Hash equality ignores key order. Plain
+ * `JSON.stringify` does not — and the two sides of this comparison are never in
+ * the same order: `local.requestPayload` came back through a Postgres `jsonb`
+ * column, which stores keys sorted by length then bytes, while `order` is a
+ * fresh parse of the webhook body in Fluid's order. `ship_to` goes into the
+ * signature as the raw nested object, so without this every order.updated on an
+ * already-SUBMITTED order looked "changed" and was re-pushed to ShipStation.
+ */
+function canonical(value: unknown): string {
+  return JSON.stringify(sortKeys(value));
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (!value || typeof value !== "object") return value;
+
+  const record = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort()) {
+    sorted[key] = sortKeys(record[key]);
+  }
+  return sorted;
 }
 
 function shippingSignature(payload: FluidOrderPayload) {
