@@ -20,7 +20,8 @@
     "setup:create-admin": "tsx scripts/create-admin.ts",
     "build:vite": "tsc -p tsconfig.vite.json --noEmit && vite build",
     "typecheck:vite": "tsc -p tsconfig.vite.json --noEmit",
-    "test:jest": "jest"
+    "test:jest": "jest",
+    "cutover": "tsx scripts/cutover.ts"
   },
   "dependencies": {
     "@fluid-studios/droplet-sdk": "link:./vendor/droplet-sdk",

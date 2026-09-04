@@ -181,8 +181,31 @@ export class FluidClient {
 
   // --- Webhooks -----------------------------------------------------------
 
-  async listWebhooks(): Promise<{ webhooks: FluidWebhook[] }> {
-    return this.request("/api/company/webhooks");
+  /**
+   * GET /api/company/webhooks.
+   *
+   * PAGINATED, and the default page size is small. fluid's
+   * `Api::Company::Webhooks::IndexAction` does
+   * `webhooks.page(params[:page] || 1).per(params[:per_page] || 30)`, so a bare
+   * call returns at most 30 of a company's webhooks with nothing in the body
+   * saying more exist. The listing is also company-scoped rather than
+   * droplet-scoped: an active company has webhooks from every droplet it has
+   * installed, and 30 is easy to exceed.
+   *
+   * Callers that need to find OUR webhooks must therefore page to the end.
+   * scripts/cutover.ts does; registration and cleanup only ever create, so they
+   * do not read this.
+   */
+  async listWebhooks(params?: {
+    page?: number;
+    per_page?: number;
+  }): Promise<{ webhooks: FluidWebhook[] }> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.per_page) query.set("per_page", String(params.per_page));
+    const suffix = query.size > 0 ? `?${query}` : "";
+
+    return this.request(`/api/company/webhooks${suffix}`);
   }
 
   async createWebhook(
