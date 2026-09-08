@@ -15,9 +15,15 @@
  *
  * Faithful to ActiveRecord::Encryption as of Rails 8:
  *
- *  - key   = PBKDF2-HMAC-SHA1(secret, key_derivation_salt, 2**16, 32 bytes)
- *            (ActiveSupport::KeyGenerator's SHA1 default, which Rails keeps for
- *            this because changing it would strand every existing ciphertext)
+ *  - key   = PBKDF2-HMAC-<digest>(secret, key_derivation_salt, 2**16, 32 bytes)
+ *            <digest> is SHA256 under `config.load_defaults 7.1` or later, which
+ *            config/application.rb sets to 8.0. It is SHA1 for an app still on
+ *            6.1 defaults. This is NOT a detail to guess at: deriving with the
+ *            wrong digest yields a valid-looking 32-byte key that fails GCM
+ *            authentication on every row, which is exactly how this app went to
+ *            production able to reach the database and unable to read a single
+ *            company's credentials (STU2-3293). Decryption therefore tries
+ *            SHA256 and then SHA1, and reports which answered.
  *  - iv    = HMAC-SHA256(key, clear_text)[0, 12] for deterministic attributes
  *  - cipher= AES-256-GCM, empty auth_data, 16-byte auth tag
  *  - bodies over 140 bytes are raw-deflated first and tagged `"c": true`
@@ -74,7 +80,7 @@ export class RailsEncryptionError extends Error {
  * already runs Rails needs no new secrets. Missing keys throw rather than
  * defaulting: a default here would silently write ciphertext Rails cannot read.
  */
-function encryptionKey(): Buffer {
+function encryptionKey(digest: KeyDigest = "sha256"): Buffer {
   const secret = process.env.ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY;
   const salt = process.env.ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT;
 
@@ -86,12 +92,27 @@ function encryptionKey(): Buffer {
     );
   }
 
-  return deriveKey(secret, salt);
+  return deriveKey(secret, salt, digest);
 }
 
+/**
+ * The digests an Active Record app could have derived with, newest first.
+ *
+ * Rails 7.1 changed `active_record.encryption.hash_digest_class` from SHA1 to
+ * SHA256 in its new framework defaults. config/application.rb declares
+ * `config.load_defaults 8.0`, so the running Rails app derives with SHA256 and
+ * everything in `integration_settings` was written under it.
+ */
+export const KEY_DIGESTS = ["sha256", "sha1"] as const;
+export type KeyDigest = (typeof KEY_DIGESTS)[number];
+
 /** Exposed for the test vectors; the app always goes through encryptionKey(). */
-export function deriveKey(secret: string, salt: string): Buffer {
-  return pbkdf2Sync(secret, salt, PBKDF2_ITERATIONS, KEY_LENGTH, "sha1");
+export function deriveKey(
+  secret: string,
+  salt: string,
+  digest: KeyDigest = "sha256",
+): Buffer {
+  return pbkdf2Sync(secret, salt, PBKDF2_ITERATIONS, KEY_LENGTH, digest);
 }
 
 function deterministicIv(key: Buffer, clearText: Buffer): Buffer {
@@ -121,14 +142,41 @@ export function encryptMessage(plaintext: string, key = encryptionKey()): Encryp
 }
 
 /** Decrypts one of Rails' envelopes back to the string it was built from. */
-export function decryptMessage(message: EncryptedMessage, key = encryptionKey()): string {
+export function decryptMessage(message: EncryptedMessage, key?: Buffer): string {
   const authTag = Buffer.from(message.h.at, "base64");
   // Truncated tags are forgeable, and Ruby's OpenSSL bindings do not reject
-  // them — Rails checks the length itself, so this does too.
+  // them — Rails checks the length itself, so this does too. Checked once,
+  // before any key is tried: it is a property of the message, not of the key.
   if (authTag.byteLength !== AUTH_TAG_LENGTH) {
     throw new RailsEncryptionError("encrypted message has a truncated auth tag");
   }
 
+  // An explicit key means the caller has already chosen a derivation.
+  if (key) return decryptWith(message, key, authTag);
+
+  // Otherwise try each derivation the app could be running against. GCM
+  // authenticates, so a wrong key cannot produce a plausible plaintext — it
+  // throws. Trying SHA1 after SHA256 costs one failed decrypt on an app that
+  // has never used SHA1, and is what lets this read rows written before a
+  // `load_defaults` bump without a migration.
+  let lastError: unknown;
+  for (const digest of KEY_DIGESTS) {
+    try {
+      return decryptWith(message, encryptionKey(digest), authTag);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new RailsEncryptionError(String(lastError));
+}
+
+function decryptWith(
+  message: EncryptedMessage,
+  key: Buffer,
+  authTag: Buffer,
+): string {
   const decipher = createDecipheriv(
     CIPHER,
     key,
