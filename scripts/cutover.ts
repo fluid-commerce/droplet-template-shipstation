@@ -3,18 +3,28 @@
  * Next app, and reports whether doing so would keep that company's orders
  * flowing.
  *
- *   pnpm cutover status  <fluid_shop>
+ * Both commands need to know where the registrations are NOW (`--from`) as well
+ * as where they should go (`--url`), and the route (`--webhook-path`), because
+ * the two apps do not agree on any of the three.
+ *
+ *   pnpm cutover status <fluid_shop> \
+ *     --from https://fluid-droplet-shipstation-....run.app \
+ *     --url  https://fluid-droplet-shipstation-next-....run.app
+ *
  *   APPLY=1 pnpm cutover repoint <fluid_shop> \
- *     --url https://fluid-droplet-shipstation-next-....run.app \
+ *     --from https://fluid-droplet-shipstation-....run.app \
+ *     --url  https://fluid-droplet-shipstation-next-....run.app \
  *     --webhook-path /api/webhooks
  *
- * Rollback is the same command aimed back at Rails — and it MUST carry Rails's
- * own path, because the two apps do not agree on it:
+ * Rollback is the same command with --from and --url swapped, carrying Rails's
+ * own path:
  *
  *   APPLY=1 pnpm cutover repoint <fluid_shop> \
- *     --url https://fluid-droplet-shipstation-....run.app \
+ *     --from https://fluid-droplet-shipstation-next-....run.app \
+ *     --url  https://fluid-droplet-shipstation-....run.app \
  *     --webhook-path /webhook
  *
+
  * ## Why this droplet's cutover is different from its siblings'
  *
  * Every other ported droplet cuts over CALLBACKS: synchronous, on the checkout
@@ -231,12 +241,19 @@ async function status(handle: string, args: string[]) {
   const company = await loadCompany(handle);
   const client = createFluidClient(company.authenticationToken);
 
+  // Both origins come from flags, like repoint's. Falling back to
+  // FLUID_DROPLET_URL meant that from a clean shell — which is what
+  // db-connect.sh --exec gives you — status searched only the destination,
+  // found nothing of ours, and printed "0 webhook(s) would be repointed".
+  //
+  // That is worse than repoint's version of the same bug. repoint exited
+  // non-zero and said it had matched nothing; status returned a NUMBER, and a
+  // wrong number reads as an answer.
   const destination = flag(args, "--url");
+  const source = flag(args, "--from");
   const origins = [
     destination ? normaliseOrigin(destination, "--url") : null,
-    process.env.FLUID_DROPLET_URL
-      ? normaliseOrigin(process.env.FLUID_DROPLET_URL, "FLUID_DROPLET_URL")
-      : null,
+    source ? normaliseOrigin(source, "--from") : null,
   ].filter((value): value is string => value !== null);
 
   const webhooks = await listWebhooks(client);
@@ -260,9 +277,10 @@ async function status(handle: string, args: string[]) {
 
   if (origins.length === 0) {
     console.log(
-      `\nNeither --url nor FLUID_DROPLET_URL was set, so nothing could be ` +
-        `matched as ours. Re-run with --url <destination> to see what repoint ` +
-        `would move.`,
+      `\nNo --from or --url given, so nothing could be matched as ours — the\n` +
+        `list above is every webhook this company has, unannotated.\n\n` +
+        `  Re-run with --from <where they are now> and --url <destination> to\n` +
+        `  see which are ours and what repoint would move.`,
     );
     return;
   }
@@ -711,7 +729,7 @@ async function main() {
   if (!command || !handle) {
     console.error(
       `usage:\n` +
-        `  pnpm cutover status  <fluid_shop> [--url <base>]\n` +
+        `  pnpm cutover status <fluid_shop> --from <current> --url <destination>\n` +
         `  APPLY=1 pnpm cutover repoint <fluid_shop> --from <current> --url <destination> --webhook-path <path>`,
     );
     process.exit(2);
