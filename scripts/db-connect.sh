@@ -45,6 +45,29 @@ for cmd in "${REQUIRED[@]}"; do
   fi
 done
 
+# The url splitter, defined here rather than inline below.
+#
+# A quoted heredoc nested inside `eval "$( ... )"` does not PARSE under bash
+# 3.2 — which is /bin/bash on macOS, and this script's shebang. It failed with
+# "unexpected EOF while looking for matching `''" before running a single line,
+# in every mode. It looked fine only because the shell that checked it was a
+# Homebrew bash 5.x on PATH, not the one named at the top of this file.
+#
+# `read -d ''` at top level is fine in 3.2, so the program lives in a variable
+# and the command substitution stays a plain one-liner.
+read -r -d '' SPLIT_DB_URL_JS <<'NODE' || true
+const u = new URL(process.env.DB_URL_FOR_PARSE);
+const password = decodeURIComponent(u.password);
+const user = decodeURIComponent(u.username);
+u.password = "";
+u.username = "";
+// Shell-quote: wrap in single quotes, escape any single quote within.
+const q = (v) => "'" + String(v).replace(/'/g, "'\\''") + "'";
+process.stdout.write(
+  `PGPASSWORD=${q(password)}\nPGUSER=${q(user)}\nSAFE_URL=${q(u.href)}\n`,
+);
+NODE
+
 # Fetch DATABASE_URL (value never printed)
 DB_URL=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null)
 if [ -z "$DB_URL" ]; then
@@ -83,20 +106,7 @@ else
   #
   # PGPASSWORD is libpq's env channel, so the secret stays out of argv. The
   # url passed on is the same one minus its credentials.
-  eval "$(
-    DB_URL_FOR_PARSE="$LOCAL_DB_URL" node <<'NODE'
-const u = new URL(process.env.DB_URL_FOR_PARSE);
-const password = decodeURIComponent(u.password);
-const user = decodeURIComponent(u.username);
-u.password = "";
-u.username = "";
-// Shell-quote by wrapping in single quotes and escaping any single quote.
-const q = (v) => "'" + String(v).replace(/'/g, "'\\''") + "'";
-process.stdout.write(
-  `PGPASSWORD=${q(password)}\nPGUSER=${q(user)}\nSAFE_URL=${q(u.href)}\n`,
-);
-NODE
-  )"
+  eval "$(DB_URL_FOR_PARSE="$LOCAL_DB_URL" node -e "$SPLIT_DB_URL_JS")"
   export PGPASSWORD PGUSER
 
   if [ "$1" = "-c" ] && [ -n "$2" ]; then

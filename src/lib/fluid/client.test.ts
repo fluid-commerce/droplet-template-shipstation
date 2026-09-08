@@ -36,6 +36,71 @@ describe("FluidClient", () => {
     );
   });
 
+  it("pages listAllWebhooks to the end and returns every webhook", async () => {
+    // The bug this covers reached production twice. GET /api/company/webhooks
+    // pages at 30 by default and the listing is COMPANY-scoped, so an active
+    // company carries a webhook for every droplet it has installed. A single
+    // unpaged call returned 30 of one company's 39 and silently omitted an
+    // order.created — a repoint moved two webhooks of three and reported
+    // success, and the uninstall cleanup could not find its own subscriptions.
+    const page = (n: number, count: number) =>
+      jsonResponse({
+        webhooks: Array.from({ length: count }, (_, i) => ({
+          id: n * 1000 + i,
+          resource: "order",
+          event: "created",
+          url: "https://ours.example.com/api/webhooks",
+        })),
+      });
+
+    fetchMock
+      .mockResolvedValueOnce(page(1, 100))
+      .mockResolvedValueOnce(page(2, 100))
+      .mockResolvedValueOnce(page(3, 7));
+
+    const client = new FluidClient("token", "https://api.fluid.test");
+    const all = await client.listAllWebhooks();
+
+    expect(all).toHaveLength(207);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.fluid.test/api/company/webhooks?page=1&per_page=100",
+    );
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "https://api.fluid.test/api/company/webhooks?page=3&per_page=100",
+    );
+  });
+
+  it("stops after one request when the first page is short", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ webhooks: [{ id: 1, resource: "order", event: "created" }] }),
+    );
+
+    const client = new FluidClient("token", "https://api.fluid.test");
+    expect(await client.listAllWebhooks()).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws at the page cap rather than returning a truncated list", async () => {
+    // Refusing loudly matters more than it looks: at every call site a
+    // truncated list is indistinguishable from a complete one, so returning
+    // what it has would silently under-report and each caller would act on it.
+    const full = () =>
+      jsonResponse({
+        webhooks: Array.from({ length: 2 }, (_, i) => ({ id: i })),
+      });
+    // mockImplementation, not mockResolvedValue: a Response body can be read
+    // once, so handing back the same object on every call fails with "Body has
+    // already been read" instead of the assertion under test.
+    fetchMock.mockImplementation(async () => full());
+
+    const client = new FluidClient("token", "https://api.fluid.test");
+    await expect(client.listAllWebhooks(2, 3)).rejects.toThrow(
+      /refusing to act on a list that may be truncated/,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("omits the query string entirely when given no params", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ callback_registrations: [] }));
 
