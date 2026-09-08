@@ -33,7 +33,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for cmd in gcloud cloud-sql-proxy psql; do
+# psql is only needed by the interactive and -c paths. --exec never calls it,
+# and refusing to run there on a machine without psql would be a check failing
+# for something the command does not use.
+REQUIRED=(gcloud cloud-sql-proxy)
+[ "${1:-}" = "--exec" ] || REQUIRED+=(psql)
+for cmd in "${REQUIRED[@]}"; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "Error: $cmd is not installed" >&2
     exit 1

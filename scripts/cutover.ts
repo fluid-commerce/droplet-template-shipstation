@@ -4,9 +4,16 @@
  * flowing.
  *
  *   pnpm cutover status  <fluid_shop>
- *   APPLY=1 pnpm cutover repoint <fluid_shop> --url https://fluid-droplet-shipstation-next-....run.app
+ *   APPLY=1 pnpm cutover repoint <fluid_shop> \
+ *     --url https://fluid-droplet-shipstation-next-....run.app \
+ *     --webhook-path /api/webhooks
  *
- * Rollback is the same command with --url pointing back at the Rails service.
+ * Rollback is the same command aimed back at Rails — and it MUST carry Rails's
+ * own path, because the two apps do not agree on it:
+ *
+ *   APPLY=1 pnpm cutover repoint <fluid_shop> \
+ *     --url https://fluid-droplet-shipstation-....run.app \
+ *     --webhook-path /webhook
  *
  * ## Why this droplet's cutover is different from its siblings'
  *
@@ -89,12 +96,19 @@ const RAILS_WEBHOOK_PATH = "/webhook";
 const WEBHOOK_PATHS = [NEXT_WEBHOOK_PATH, RAILS_WEBHOOK_PATH];
 
 /**
- * Events fluid signs with the SHARED secret rather than a company's own token.
+ * The events fluid signs with the SHARED secret rather than a company's own
+ * token — the EXACT pairs, not the resource.
  *
- * Kept identical to BOOTSTRAP_EVENTS in src/app/api/webhooks/route.ts. If the
- * two ever disagree, this script will either refuse a webhook that would have
- * worked or move one that will not.
+ * Kept identical to BOOTSTRAP_EVENTS in src/app/api/webhooks/route.ts, which
+ * lists `droplet.installed` and `droplet.uninstalled` and nothing else.
+ *
+ * Matching on `resource === "droplet"` alone was wrong and reachable: a
+ * `droplet.updated` subscription would be classified bootstrap, so the
+ * token guard below would wave it through for a company we hold no
+ * verification token for — and the route would then 401 every delivery,
+ * because it accepts the shared secret only for the two events above.
  */
+const BOOTSTRAP_EVENTS = new Set(["droplet.installed", "droplet.uninstalled"]);
 const BOOTSTRAP_RESOURCE = "droplet";
 
 type FluidWebhook = {
@@ -187,7 +201,7 @@ function isOurs(webhook: FluidWebhook, origins: string[]): boolean {
 }
 
 function isBootstrap(webhook: FluidWebhook): boolean {
-  return webhook.resource === BOOTSTRAP_RESOURCE;
+  return BOOTSTRAP_EVENTS.has(`${webhook.resource}.${webhook.event}`);
 }
 
 /**
@@ -302,13 +316,32 @@ async function repoint(handle: string, args: string[]) {
   const destination = flag(args, "--url");
   if (!destination) fail("repoint needs --url <destination base url>.");
   const target = normaliseOrigin(destination, "--url");
-  const path = normalisePath(
-    flag(args, "--webhook-path") ?? NEXT_WEBHOOK_PATH,
-    "--webhook-path",
-  );
+  // REQUIRED, with no default.
+  //
+  // It used to default to this app's `/api/webhooks`, which quietly broke the
+  // documented rollback: `repoint <shop> --url https://<rails>` then wrote
+  // `https://<rails>/api/webhooks`, a route Rails does not have — it serves
+  // `post "webhook"` (config/routes.rb). The update would report success, and
+  // every subsequent delivery would 404 behind Fluid's retry.
+  //
+  // The two apps do not agree on the path, so the path cannot be inferred from
+  // the host without encoding a guess about which app lives there. State it.
+  const pathFlag = flag(args, "--webhook-path");
+  if (!pathFlag) {
+    fail(
+      `repoint needs --webhook-path.\n\n` +
+        `  This app serves ${NEXT_WEBHOOK_PATH}; Rails serves ${RAILS_WEBHOOK_PATH}.\n` +
+        `  There is no safe default: defaulting to either one silently writes a\n` +
+        `  url the other app does not serve, and the update still reports success.\n\n` +
+        `  cut over:  --url <next-service>  --webhook-path ${NEXT_WEBHOOK_PATH}\n` +
+        `  roll back: --url <rails-service> --webhook-path ${RAILS_WEBHOOK_PATH}`,
+    );
+  }
+  const path = normalisePath(pathFlag, "--webhook-path");
   const targetUrl = `${target}${path}`;
 
-  const authToken = process.env.FLUID_WEBHOOK_AUTH_TOKEN;
+  const sharedToken = process.env.FLUID_WEBHOOK_AUTH_TOKEN;
+  const authToken = sharedToken;
   if (!authToken) {
     fail(
       `FLUID_WEBHOOK_AUTH_TOKEN is not set. The update endpoint validates ` +
@@ -389,11 +422,30 @@ async function repoint(handle: string, args: string[]) {
       );
     }
 
+    // The token this webhook must be signed with, per webhook — NOT one shared
+    // value for all of them.
+    //
+    // fluid's `Webhook#auth_token` is
+    // `droplet_installation&.webhook_verification_token || super`, so the
+    // stored column is only consulted when the webhook is NOT linked to an
+    // installation. Sending the shared secret for everything was therefore
+    // correct only for linked webhooks, and silently wrong for an unlinked
+    // `order.*`: fluid would sign it with the shared token and
+    // src/app/api/webhooks/route.ts accepts that token for lifecycle events
+    // ONLY, so every delivery would 401.
+    //
+    // Sending the company's own verification token for non-bootstrap webhooks
+    // is right in both branches — ignored when an installation link exists,
+    // and exactly what the route expects when it does not.
+    const webhookToken = isBootstrap(webhook)
+      ? sharedToken
+      : (company.webhookVerificationToken ?? sharedToken);
+
     await client.updateWebhook(String(webhook.id), {
       resource: webhook.resource,
       event: webhook.event,
       url: targetUrl,
-      auth_token: authToken,
+      auth_token: webhookToken,
       http_method: "post",
       active: webhook.active ?? true,
     });
@@ -429,7 +481,7 @@ async function main() {
     console.error(
       `usage:\n` +
         `  pnpm cutover status  <fluid_shop> [--url <base>]\n` +
-        `  APPLY=1 pnpm cutover repoint <fluid_shop> --url <base> [--from <base>] [--webhook-path <path>]`,
+        `  APPLY=1 pnpm cutover repoint <fluid_shop> --url <base> --webhook-path <path> [--from <base>]`,
     );
     process.exit(2);
   }
