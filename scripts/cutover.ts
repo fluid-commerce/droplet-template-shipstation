@@ -321,6 +321,15 @@ async function repoint(handle: string, args: string[]) {
     );
   }
   const path = normalisePath(pathFlag, "--webhook-path");
+  if (!WEBHOOK_PATHS.includes(path)) {
+    fail(
+      `--webhook-path must be one of ${WEBHOOK_PATHS.join(" or ")}; got "${path}".\n\n` +
+        `  These are the only two routes either app serves. A near miss —\n` +
+        `  "/api/webhook" for "/api/webhooks" — is accepted by fluid, stored,\n` +
+        `  and reads back exactly as requested, so every check downstream of\n` +
+        `  the write passes while deliveries 404.`,
+    );
+  }
   const targetUrl = `${target}${path}`;
 
   const sharedToken = process.env.FLUID_WEBHOOK_AUTH_TOKEN;
@@ -365,6 +374,34 @@ async function repoint(handle: string, args: string[]) {
     );
   }
 
+  // Every enabled subscription must be accounted for BEFORE anything moves.
+  //
+  // Install-time registration failures are logged and swallowed
+  // (src/lib/handlers/droplet-installed.ts), so a company can be live with
+  // `order.created` registered and `order.updated` never created at all. Moving
+  // the one that exists and reporting success would cut the tenant over in a
+  // state where edits and cancellations reach nothing — the exact silent-gap
+  // shape this tool exists to avoid.
+  const enabled = dropletConfig.webhooks.filter((w) => w.enabled !== false);
+  const found = new Set(
+    ours.filter((w) => !isBootstrap(w)).map((w) => `${w.resource}.${w.event}`),
+  );
+  const absent = enabled
+    .map((w) => `${w.resource}.${w.event}`)
+    .filter((name) => !found.has(name));
+  if (absent.length > 0) {
+    fail(
+      `Refusing to repoint ${company.fluidShop}.\n\n` +
+        `  This droplet subscribes to ${enabled.length} event(s), and fluid holds no\n` +
+        `  registration of ours for: ${absent.join(", ")}.\n\n` +
+        `  Install-time registration failures are logged and swallowed, so this is\n` +
+        `  a state a live company can genuinely be in. Moving what does exist would\n` +
+        `  report success on a tenant whose ${absent.join("/")} still reaches nothing.\n\n` +
+        `  Re-register for this company first. Nothing has been changed.`,
+    );
+  }
+
+
   const holdsToken = !!company.webhookVerificationToken;
   const blocked = ours.filter((w) => !isBootstrap(w) && !holdsToken);
   if (blocked.length > 0) {
@@ -378,6 +415,31 @@ async function repoint(handle: string, args: string[]) {
         `re-run. Nothing has been changed.`,
     );
   }
+
+  // Prove the destination route is actually mounted before pointing anything at
+  // it. The read-back after the write only proves fluid stored what we asked
+  // for; it cannot tell a live route from a 404. An unsigned POST is enough —
+  // the webhook route fails closed, so 401 means mounted and verifying, and
+  // 404 means we would be registering a url nothing serves.
+  const probe = await fetch(targetUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ resource: "droplet", event: "installed" }),
+  }).catch((error: unknown) => {
+    fail(
+      `Could not reach ${targetUrl}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
+  if (probe.status === 404) {
+    fail(
+      `${targetUrl} returns 404 — nothing serves that route.\n\n` +
+        `  Check --url and --webhook-path. Registering it would leave every\n` +
+        `  delivery 404ing behind fluid's retry, which looks like silence.`,
+    );
+  }
+  console.log(`Destination ${targetUrl} answered ${probe.status} (not 404).`);
 
   console.log(`Company ${company.fluidShop} (id ${company.id})`);
   console.log(`Repointing ${ours.length} webhook(s) to ${targetUrl}\n`);
