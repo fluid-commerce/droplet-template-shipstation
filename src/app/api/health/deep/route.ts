@@ -17,9 +17,9 @@
  *     encryption keys are supplied as three separate secrets; wire any of them
  *     wrongly and the service still starts, still verifies webhook signatures,
  *     and still cannot read a single company's ShipStation credentials.
- *  3. Whether what decrypts is USABLE for the API version that company is set
- *     to. A blob holding only `api_key` decrypts fine and then sends
- *     `Basic key:` to ShipStation, which 401s every order.
+ *  3. Whether what decrypts is USABLE by the order path. A blob holding only
+ *     `api_key` decrypts fine and then sends `Basic key:` to ShipStation,
+ *     which 401s every order.
  *
  * ## Ask about a company, not about "some company"
  *
@@ -41,29 +41,36 @@
 
 import { NextResponse } from "next/server";
 
+import type { IntegrationSetting } from "@prisma/client";
+
 import { prisma } from "@/lib/db";
 import { isAuthorizedJobRequest } from "@/lib/jobs/authorize";
-import { secretsOf, type ShipstationSecrets } from "@/lib/integration-settings";
-
-type SettingRow = {
-  apiVersion: string;
-  settings: unknown;
-};
+import {
+  findIntegrationSetting,
+  secretsOf,
+  type ShipstationSecrets,
+} from "@/lib/integration-settings";
 
 /**
- * Whether these secrets would actually authenticate against the API version
- * this company is configured for.
+ * Whether these secrets would actually submit an order.
  *
- * v1 is HTTP Basic over `api_key:api_secret` — `v1Headers` interpolates both
- * and falls back to "" for either, so a half-configured row produces a
- * syntactically valid header that ShipStation rejects. v2 is a single
- * `v2_api_key`. Mirrors `hasV1Credentials` in src/lib/shipstation/client.ts;
- * duplicated as a value check rather than imported because that helper takes
- * the camelCase credentials shape and pulling it in here would drag the
- * ShipStation client into a health route.
+ * The v1 PAIR, always — deliberately not keyed off the company's `api_version`.
+ * `createShipstationOrder` POSTs to `${SHIPSTATION_API_BASE}/orders/createorder`
+ * with `v1Headers(credentials)` unconditionally; nothing on the order path
+ * consults `api_version` or `isV2`, which today only reach the settings screen
+ * and `testConnection`. So a company set to v2 and holding only a `v2_api_key`
+ * would have every order sent as `Basic :` — a syntactically valid header
+ * ShipStation rejects — and calling that healthy here would wave through the
+ * cutover of a company whose orders cannot land.
+ *
+ * If v2 order submission is ever implemented, this is one of the places that
+ * has to change with it.
+ *
+ * Mirrors `hasV1Credentials` in src/lib/shipstation/client.ts, as a value check
+ * rather than an import: that helper takes the camelCase credentials shape, and
+ * pulling it in would drag the ShipStation client into a health route.
  */
-function credentialsUsable(secrets: ShipstationSecrets, apiVersion: string): boolean {
-  if (apiVersion === "v2") return !!secrets.v2_api_key;
+function credentialsUsable(secrets: ShipstationSecrets): boolean {
   return !!secrets.api_key && !!secrets.api_secret;
 }
 
@@ -84,14 +91,14 @@ export async function GET(request: Request): Promise<Response> {
       queried: 0,
       decryptable: 0,
       undecryptable: 0,
-      /** Decrypted, but missing a credential the configured api_version needs. */
+      /** Decrypted, but missing a credential the order path needs. */
       unusable: 0,
     },
     error: null as string | null,
   };
 
   try {
-    let rows: SettingRow[];
+    let rows: IntegrationSetting[];
 
     if (handle) {
       // One company. A handle that matches nothing, or matches a company with
@@ -106,7 +113,6 @@ export async function GET(request: Request): Promise<Response> {
             { id: /^\d+$/.test(handle) ? BigInt(handle) : BigInt(-1) },
           ],
         },
-        select: { id: true, active: true },
       });
       result.database = true;
 
@@ -119,30 +125,32 @@ export async function GET(request: Request): Promise<Response> {
         return NextResponse.json(result, { status: 503 });
       }
 
-      // The exact query the order path runs. A schema/table mismatch throws
-      // here, which is the whole point.
-      const setting = await prisma.integrationSetting.findUnique({
-        where: { companyId: company.id },
-        select: { apiVersion: true, settings: true },
-      });
+      // findIntegrationSetting, NOT a hand-written query with a `select`.
+      //
+      // This must be the order path's own call, unqualified. Prisma only asks
+      // for the columns a `select` names, so narrowing it to the two fields
+      // this route reads would silence exactly the class of failure the route
+      // exists to catch: a schema declaring `credentials` (or any other absent
+      // column) throws on the order path's unqualified findUnique and would
+      // NOT throw on a narrowed one. That is the nuvamed outage reproduced
+      // inside its own health check.
+      const setting = await findIntegrationSetting(company.id);
       if (!setting) {
         result.error = `company "${handle}" has no integration_settings row`;
         return NextResponse.json(result, { status: 503 });
       }
       rows = [setting];
     } else {
-      const companies = await prisma.company.findMany({
-        where: { active: true },
-        select: { id: true },
-      });
+      // Unqualified for the same reason the settings lookup is: the order path
+      // reads companies with a bare `findFirst`, so a narrowed select here would
+      // pass over a drifted `companies` table that the order path trips on.
+      const companies = await prisma.company.findMany({ where: { active: true } });
       result.database = true;
 
       rows = [];
       for (const company of companies) {
-        const setting = await prisma.integrationSetting.findUnique({
-          where: { companyId: company.id },
-          select: { apiVersion: true, settings: true },
-        });
+        // Unqualified, for the reason given in the scoped branch above.
+        const setting = await findIntegrationSetting(company.id);
         if (setting) rows.push(setting);
       }
     }
@@ -151,7 +159,7 @@ export async function GET(request: Request): Promise<Response> {
       result.integrationSettings.queried += 1;
       let secrets: ShipstationSecrets;
       try {
-        secrets = secretsOf(setting as Parameters<typeof secretsOf>[0]);
+        secrets = secretsOf(setting);
       } catch {
         result.integrationSettings.undecryptable += 1;
         continue;
@@ -159,7 +167,7 @@ export async function GET(request: Request): Promise<Response> {
       // Decrypting to an empty object is not proof of anything — a company may
       // simply not have configured ShipStation yet — and neither is decrypting
       // to a PARTIAL one, which authenticates against nothing.
-      if (credentialsUsable(secrets, setting.apiVersion)) {
+      if (credentialsUsable(secrets)) {
         result.integrationSettings.decryptable += 1;
       } else {
         result.integrationSettings.unusable += 1;

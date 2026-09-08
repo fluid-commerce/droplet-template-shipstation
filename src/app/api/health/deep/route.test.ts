@@ -104,17 +104,19 @@ describe("GET /api/health/deep", () => {
     expect(body.integrationSettings.decryptable).toBe(0);
   });
 
-  it("accepts a v2 company holding only a v2_api_key", async () => {
-    // The v1 pair is irrelevant on v2 — requiring it would fail a healthy company.
+  it("fails a v2 company holding only a v2_api_key, because the order path is v1-only", async () => {
+    // createShipstationOrder POSTs with v1Headers unconditionally and never
+    // consults api_version, so v2-only credentials submit `Basic :`. Calling
+    // this healthy would cut over a company whose orders cannot land.
     mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
     mockPrisma.integrationSetting.findUnique.mockResolvedValue(v2Complete);
 
     const response = await GET(request("?company=nuvamed.fluid.app"));
-    expect(response.status).toBe(200);
-    expect((await response.json()).ok).toBe(true);
+    expect(response.status).toBe(503);
+    expect((await response.json()).integrationSettings.unusable).toBe(1);
   });
 
-  it("fails a v2 company holding only the v1 pair", async () => {
+  it("accepts a v2-flagged company that still holds the v1 pair the order path uses", async () => {
     mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
     mockPrisma.integrationSetting.findUnique.mockResolvedValue({
       apiVersion: "v2",
@@ -122,8 +124,22 @@ describe("GET /api/health/deep", () => {
     });
 
     const response = await GET(request("?company=nuvamed.fluid.app"));
-    expect(response.status).toBe(503);
-    expect((await response.json()).integrationSettings.unusable).toBe(1);
+    expect(response.status).toBe(200);
+    expect((await response.json()).ok).toBe(true);
+  });
+
+  it("asks for the settings row WITHOUT a select, so a drifted column still throws", async () => {
+    // The regression this guards: narrowing the query to the fields this route
+    // reads would stop a phantom column from throwing here while the order
+    // path's unqualified findUnique still failed on it.
+    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    mockPrisma.integrationSetting.findUnique.mockResolvedValue(v1Complete);
+
+    await GET(request("?company=nuvamed.fluid.app"));
+
+    const call = mockPrisma.integrationSetting.findUnique.mock.calls[0][0];
+    expect(call.select).toBeUndefined();
+    expect(mockPrisma.company.findFirst.mock.calls[0][0].select).toBeUndefined();
   });
 
   it("marks itself unscoped when asked without a company, so a caller cannot mistake it for a per-company answer", async () => {
