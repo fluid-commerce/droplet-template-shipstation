@@ -63,15 +63,84 @@ describe("deriveKey", () => {
   });
 
   it("defaults to SHA256, which is what load_defaults 7.1+ derives with", () => {
-    // PBKDF2-HMAC-SHA256(secret, salt, 2**16, 32) — the derivation the deployed
-    // Rails app uses. Pinned so a change of default is a test failure and not a
-    // fleet-wide inability to read credentials.
+    // A LITERAL, not a comparison against deriveKey(..., "sha256") — that would
+    // assert only that the default equals itself and would keep passing if the
+    // default went back to SHA1, which is the failure this whole PR exists to
+    // fix. PBKDF2-HMAC-SHA256 is fully specified, so this value is fixed by the
+    // standard rather than by anything in this file.
     expect(deriveKey(DETERMINISTIC_KEY, SALT).toString("hex")).toBe(
-      deriveKey(DETERMINISTIC_KEY, SALT, "sha256").toString("hex"),
+      "bd744b4cf47f1679c683084cfadc1c360570b0bd147a6fea56ee2d2ead084c08",
     );
-    expect(deriveKey(DETERMINISTIC_KEY, SALT, "sha256")).not.toEqual(
-      deriveKey(DETERMINISTIC_KEY, SALT, "sha1"),
-    );
+  });
+});
+
+/**
+ * The DEFAULT paths — no explicit key — which are the ones production uses and
+ * the ones nothing pinned before. Every test above hands in a key, so they all
+ * went on passing while the deployed service could not read a single row.
+ */
+describe("the default key path", () => {
+  const withEnv = <T,>(run: () => T): T => {
+    const before = {
+      k: process.env.ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY,
+      s: process.env.ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT,
+    };
+    process.env.ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY = DETERMINISTIC_KEY;
+    process.env.ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT = SALT;
+    try {
+      return run();
+    } finally {
+      process.env.ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY = before.k;
+      process.env.ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT = before.s;
+    }
+  };
+
+  it("encrypts under SHA256, so what it writes is what the Rails app reads", () => {
+    withEnv(() => {
+      const message = encryptMessage(SHORT_PLAINTEXT);
+      // Byte-identical to encrypting with the SHA256 key explicitly, and NOT to
+      // the SHA1 vector. Reverting the default to SHA1 fails here.
+      expect(message).toEqual(
+        encryptMessage(SHORT_PLAINTEXT, deriveKey(DETERMINISTIC_KEY, SALT, "sha256")),
+      );
+      expect(message).not.toEqual(SHORT_MESSAGE);
+    });
+  });
+
+  it("reads a SHA256 row without being told which digest to use", () => {
+    withEnv(() => {
+      const message = encryptMessage(
+        SHORT_PLAINTEXT,
+        deriveKey(DETERMINISTIC_KEY, SALT, "sha256"),
+      );
+      expect(decryptMessage(message)).toBe(SHORT_PLAINTEXT);
+    });
+  });
+
+  it("falls back to SHA1 for a row written under 6.1 defaults", () => {
+    // Exercises the fallback itself: this vector authenticates ONLY under SHA1,
+    // and no key is passed. Dropping "sha1" from KEY_DIGESTS fails here.
+    withEnv(() => {
+      expect(decryptMessage(SHORT_MESSAGE)).toBe(SHORT_PLAINTEXT);
+    });
+  });
+
+  it("still refuses a truncated auth tag once, before trying any key", () => {
+    withEnv(() => {
+      expect(() =>
+        decryptMessage({ ...SHORT_MESSAGE, h: { ...SHORT_MESSAGE.h, at: "AAAA" } }),
+      ).toThrow(RailsEncryptionError);
+    });
+  });
+
+  it("throws rather than returning plausible plaintext when no digest authenticates", () => {
+    withEnv(() => {
+      const tampered = {
+        ...SHORT_MESSAGE,
+        p: Buffer.from("not the ciphertext this tag covers").toString("base64"),
+      };
+      expect(() => decryptMessage(tampered)).toThrow();
+    });
   });
 });
 
