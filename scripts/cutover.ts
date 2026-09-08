@@ -439,110 +439,134 @@ async function repoint(handle: string, args: string[]) {
     );
   }
 
-  // Prove the destination route is actually mounted before pointing anything at
-  // it. The read-back after the write only proves fluid stored what we asked
-  // for; it cannot tell a live route from a 404. An unsigned POST is enough —
-  // the webhook route fails closed, so 401 means mounted and verifying, and
-  // 404 means we would be registering a url nothing serves.
-  const probe = await fetch(targetUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ resource: "droplet", event: "installed" }),
-  }).catch((error: unknown) => {
-    fail(
-      `Could not reach ${targetUrl}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+  // Destination checks — and ONLY for this app's own path.
+  //
+  // Rails cannot be probed. It answers 404 to an unauthenticated POST on its
+  // real /webhook route, and 404 to a route that does not exist. Measured
+  // against production:
+  //
+  //   POST /webhook       {droplet.uninstalled}  -> 404
+  //   POST /webhook       {order.created}        -> 404
+  //   POST /api/webhooks  (not a Rails route)    -> 404
+  //
+  // So no external probe distinguishes a healthy Rails endpoint from a missing
+  // one, and it does not speak HMAC either — `authenticate_webhook_token`
+  // reads an AUTH_TOKEN header. Running these checks against Rails would fail
+  // every one of them and BLOCK ROLLBACK, which is the one operation that must
+  // always work. They are skipped, deliberately; do not "fix" this by adding a
+  // probe that cannot work.
+  if (path === NEXT_WEBHOOK_PATH) {
+    // Prove the destination route is actually mounted before pointing anything at
+    // it. The read-back after the write only proves fluid stored what we asked
+    // for; it cannot tell a live route from a 404. An unsigned POST is enough —
+    // the webhook route fails closed, so 401 means mounted and verifying, and
+    // 404 means we would be registering a url nothing serves.
+    const probe = await fetch(targetUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resource: "droplet", event: "installed" }),
+    }).catch((error: unknown) => {
+      fail(
+        `Could not reach ${targetUrl}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    // EXACTLY 401. Not merely "not 404".
+    //
+    // The webhook route fails closed, so an unsigned request has one correct
+    // answer and every other status means something is wrong in a way that
+    // repointing would make live:
+    //
+    //   404  nothing serves the route
+    //   200  the route did NOT verify — an unsigned request was accepted, which
+    //        is the one outcome worse than the route being missing
+    //   403  something in front of the service is refusing us
+    //   5xx  the route is mounted and broken
+    //
+    // Accepting anything but 401 was the earlier version's flaw: it proved a
+    // route existed, not that it was doing its job.
+    if (probe.status !== 401) {
+      fail(
+        `${targetUrl} answered ${probe.status} to an unsigned webhook; expected 401.\n\n` +
+          (probe.status === 404
+            ? `  404 means nothing serves that route — check --url and --webhook-path.`
+            : probe.status === 200
+              ? `  200 means the route ACCEPTED an unsigned request. Do not point\n` +
+                `  production traffic at it: it is not verifying signatures.`
+              : `  The route is reachable but not answering as a healthy webhook\n` +
+                `  endpoint should. Investigate before repointing anything.`),
+      );
+    }
+    console.log(`Destination ${targetUrl} refused an unsigned webhook with 401.`);
+
+    // Second probe, SIGNED with the very token this run is about to write onto
+    // the bootstrap registrations.
+    //
+    // The unsigned probe proves the route verifies. It says nothing about
+    // whether OUR token is the one it accepts — so a stale but non-empty
+    // FLUID_WEBHOOK_AUTH_TOKEN passes it, gets written onto
+    // droplet.installed/uninstalled, and every lifecycle delivery 401s
+    // afterwards. Signing the probe with the same value closes that gap.
+    //
+    // `droplet.uninstalled` with a made-up installation uuid, NOT
+    // droplet.installed. Both are bootstrap events so either proves the point,
+    // but the install handler WRITES — it would create a companies row from this
+    // payload. The uninstall handler resolves the company first and returns when
+    // it finds none, so nothing is touched. This has to stay safe to fire at
+    // production.
+    const probeBody = JSON.stringify({
+      resource: "droplet",
+      event: "uninstalled",
+      company: { droplet_installation_uuid: "cutover-preflight-not-a-real-installation" },
+    });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = createHmac("sha256", authToken)
+      .update(`${timestamp}.${probeBody}`)
+      .digest("hex");
+
+    const signed = await fetch(targetUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Fluid-Timestamp": String(timestamp),
+        "X-Fluid-Signature": signature,
+      },
+      body: probeBody,
+    }).catch((error: unknown) => {
+      fail(
+        `Signed preflight to ${targetUrl} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+
+    // 202 (handled) or 204 (no company matched the made-up uuid, so the handler
+    // returned early) both mean the SIGNATURE was accepted, which is the only
+    // thing being asked. Deliberately NOT "anything but 401": a transport error
+    // or a 500 would otherwise read as success.
+    if (![200, 202, 204].includes(signed.status)) {
+      fail(
+        `Signed preflight to ${targetUrl} answered ${signed.status}.\n\n` +
+          (signed.status === 401
+            ? `  401 means the destination does not accept FLUID_WEBHOOK_AUTH_TOKEN.\n` +
+              `  Writing it onto the droplet.installed / droplet.uninstalled\n` +
+              `  registrations would make every lifecycle delivery fail. Check the\n` +
+              `  token against the destination service's own secret.`
+            : `  Expected 202 or 204. The route is reachable and verifying, but did\n` +
+              `  not complete this request — investigate before repointing.`),
+      );
+    }
+    console.log(
+      `Destination accepted a webhook signed with FLUID_WEBHOOK_AUTH_TOKEN (${signed.status}).`,
     );
-  });
-  // EXACTLY 401. Not merely "not 404".
-  //
-  // The webhook route fails closed, so an unsigned request has one correct
-  // answer and every other status means something is wrong in a way that
-  // repointing would make live:
-  //
-  //   404  nothing serves the route
-  //   200  the route did NOT verify — an unsigned request was accepted, which
-  //        is the one outcome worse than the route being missing
-  //   403  something in front of the service is refusing us
-  //   5xx  the route is mounted and broken
-  //
-  // Accepting anything but 401 was the earlier version's flaw: it proved a
-  // route existed, not that it was doing its job.
-  if (probe.status !== 401) {
-    fail(
-      `${targetUrl} answered ${probe.status} to an unsigned webhook; expected 401.\n\n` +
-        (probe.status === 404
-          ? `  404 means nothing serves that route — check --url and --webhook-path.`
-          : probe.status === 200
-            ? `  200 means the route ACCEPTED an unsigned request. Do not point\n` +
-              `  production traffic at it: it is not verifying signatures.`
-            : `  The route is reachable but not answering as a healthy webhook\n` +
-              `  endpoint should. Investigate before repointing anything.`),
+  } else {
+    console.log(
+      `Destination is the Rails path (${path}); skipping the reachability and\n` +
+        `signature checks — Rails answers 404 to any unauthenticated probe, so\n` +
+        `they cannot tell a healthy endpoint from a missing one there.`,
     );
   }
-  console.log(`Destination ${targetUrl} refused an unsigned webhook with 401.`);
-
-  // Second probe, SIGNED with the very token this run is about to write onto
-  // the bootstrap registrations.
-  //
-  // The unsigned probe proves the route verifies. It says nothing about
-  // whether OUR token is the one it accepts — so a stale but non-empty
-  // FLUID_WEBHOOK_AUTH_TOKEN passes it, gets written onto
-  // droplet.installed/uninstalled, and every lifecycle delivery 401s
-  // afterwards. Signing the probe with the same value closes that gap.
-  //
-  // `droplet.uninstalled` with a made-up installation uuid, NOT
-  // droplet.installed. Both are bootstrap events so either proves the point,
-  // but the install handler WRITES — it would create a companies row from this
-  // payload. The uninstall handler resolves the company first and returns when
-  // it finds none, so nothing is touched. This has to stay safe to fire at
-  // production.
-  const probeBody = JSON.stringify({
-    resource: "droplet",
-    event: "uninstalled",
-    company: { droplet_installation_uuid: "cutover-preflight-not-a-real-installation" },
-  });
-  const timestamp = Math.floor(Date.now() / 1000);
-  const signature = createHmac("sha256", authToken)
-    .update(`${timestamp}.${probeBody}`)
-    .digest("hex");
-
-  const signed = await fetch(targetUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "X-Fluid-Timestamp": String(timestamp),
-      "X-Fluid-Signature": signature,
-    },
-    body: probeBody,
-  }).catch((error: unknown) => {
-    fail(
-      `Signed preflight to ${targetUrl} failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  });
-
-  // 202 (handled) or 204 (no company matched the made-up uuid, so the handler
-  // returned early) both mean the SIGNATURE was accepted, which is the only
-  // thing being asked. Deliberately NOT "anything but 401": a transport error
-  // or a 500 would otherwise read as success.
-  if (![200, 202, 204].includes(signed.status)) {
-    fail(
-      `Signed preflight to ${targetUrl} answered ${signed.status}.\n\n` +
-        (signed.status === 401
-          ? `  401 means the destination does not accept FLUID_WEBHOOK_AUTH_TOKEN.\n` +
-            `  Writing it onto the droplet.installed / droplet.uninstalled\n` +
-            `  registrations would make every lifecycle delivery fail. Check the\n` +
-            `  token against the destination service's own secret.`
-          : `  Expected 202 or 204. The route is reachable and verifying, but did\n` +
-            `  not complete this request — investigate before repointing.`),
-    );
-  }
-  console.log(
-    `Destination accepted a webhook signed with FLUID_WEBHOOK_AUTH_TOKEN (${signed.status}).`,
-  );
 
   console.log(`Company ${company.fluidShop} (id ${company.id})`);
   console.log(`Repointing ${ours.length} webhook(s) to ${targetUrl}\n`);
