@@ -7,6 +7,10 @@
 #   ./scripts/db-connect.sh -c "SELECT ..."       # Run a single query
 #   ./scripts/db-connect.sh --exec -- pnpm cutover status nuvamed.fluid.app
 #
+# --exec also supplies FLUID_WEBHOOK_AUTH_TOKEN from Secret Manager, because
+# cutover signs a preflight webhook with it before writing anything. An
+# already-set value in the environment wins, so a caller can override it.
+#
 # The secret is fetched into a shell variable and never printed, echoed or
 # written to a file. That is the whole point of routing through this script
 # rather than exporting DATABASE_URL by hand: the value does not appear in
@@ -23,6 +27,7 @@ set -e
 GCP_PROJECT="fluid-417204"
 INSTANCE_CONNECTION="fluid-417204:europe-west1:fluid-studioz"
 SECRET_NAME="SHIPSTATION_DATABASE_URL"
+WEBHOOK_TOKEN_SECRET="SHIPSTATION_FLUID_WEBHOOK_AUTH_TOKEN"
 PROXY_PORT=9482
 
 cleanup() {
@@ -94,8 +99,23 @@ if [ "${1:-}" = "--exec" ]; then
     echo "Error: --exec needs a command to run" >&2
     exit 2
   fi
+  # The webhook token too, for scripts that need it.
+  #
+  # scripts/cutover.ts signs a preflight webhook with FLUID_WEBHOOK_AUTH_TOKEN
+  # before it writes anything, so it cannot run without the real value. Fetching
+  # it here keeps that value on the same footing as the database url: it is read
+  # straight into a variable and handed to the child as an environment
+  # variable, never printed, never written to a file, never placed in argv.
+  #
+  # Not fatal if it is missing — plenty of --exec commands do not need it, and
+  # the ones that do fail with their own clear message.
+  WEBHOOK_TOKEN=$(gcloud secrets versions access latest \
+    --secret="$WEBHOOK_TOKEN_SECRET" --project="$GCP_PROJECT" 2>/dev/null || true)
+
   # An env var, not argv. Child processes inherit it; `ps` does not show it.
-  DATABASE_URL="$LOCAL_DB_URL" "$@"
+  DATABASE_URL="$LOCAL_DB_URL" \
+  FLUID_WEBHOOK_AUTH_TOKEN="${FLUID_WEBHOOK_AUTH_TOKEN:-$WEBHOOK_TOKEN}" \
+    "$@"
 else
   # Split the password out of the url before psql sees it.
   #

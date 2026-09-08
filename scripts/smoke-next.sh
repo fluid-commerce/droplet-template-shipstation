@@ -141,12 +141,33 @@ if [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
     -H "X-Fluid-Timestamp: $TS" \
     -H "X-Fluid-Signature: $SIG" \
     -d "$BODY")
-  if [ "$SIGNED" = "401" ]; then
-    printf '  FAIL  %-52s %s\n' "signed lifecycle webhook is accepted" "$SIGNED"
-    fail=$((fail + 1))
-  else
-    printf '  ok    %-52s %s\n' "signed lifecycle webhook is accepted" "$SIGNED"
-  fi
+  # An explicit allow-list, not "anything but 401".
+  #
+  # `code()` returns 000 when curl cannot reach the host at all, and a 500 is a
+  # broken route — both would have counted as "the signature was accepted"
+  # under a not-401 test, which is the same failure shape as a check that only
+  # looks for good news.
+  #
+  # 202 means the handler ran; 204 means it ran and found no company matching
+  # the made-up installation uuid, which is the expected outcome here
+  # (src/app/api/webhooks/route.ts returns `handled ? 202 : 204`). Either proves
+  # the signature verified.
+  case "$SIGNED" in
+    200|202|204)
+      printf '  ok    %-52s %s\n' "signed lifecycle webhook is accepted" "$SIGNED" ;;
+    401)
+      printf '  FAIL  %-52s %s\n' "signed lifecycle webhook is accepted" \
+        "$SIGNED — the token is not the one this service accepts"
+      fail=$((fail + 1)) ;;
+    000)
+      printf '  FAIL  %-52s %s\n' "signed lifecycle webhook is accepted" \
+        "no response — could not reach the service"
+      fail=$((fail + 1)) ;;
+    *)
+      printf '  FAIL  %-52s %s\n' "signed lifecycle webhook is accepted" \
+        "$SIGNED — expected 202 or 204"
+      fail=$((fail + 1)) ;;
+  esac
 else
   printf '  SKIP  %-52s %s\n' "signed lifecycle webhook is accepted" \
     "set FLUID_WEBHOOK_AUTH_TOKEN to check"

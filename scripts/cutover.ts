@@ -76,6 +76,8 @@
  * Writes require APPLY=1. `status` never writes.
  */
 
+import { createHmac } from "node:crypto";
+
 import { prisma } from "@/lib/db";
 import { createFluidClient, type FluidClient } from "@/lib/fluid";
 import { dropletConfig } from "@/lib/config";
@@ -480,6 +482,67 @@ async function repoint(handle: string, args: string[]) {
     );
   }
   console.log(`Destination ${targetUrl} refused an unsigned webhook with 401.`);
+
+  // Second probe, SIGNED with the very token this run is about to write onto
+  // the bootstrap registrations.
+  //
+  // The unsigned probe proves the route verifies. It says nothing about
+  // whether OUR token is the one it accepts — so a stale but non-empty
+  // FLUID_WEBHOOK_AUTH_TOKEN passes it, gets written onto
+  // droplet.installed/uninstalled, and every lifecycle delivery 401s
+  // afterwards. Signing the probe with the same value closes that gap.
+  //
+  // `droplet.uninstalled` with a made-up installation uuid, NOT
+  // droplet.installed. Both are bootstrap events so either proves the point,
+  // but the install handler WRITES — it would create a companies row from this
+  // payload. The uninstall handler resolves the company first and returns when
+  // it finds none, so nothing is touched. This has to stay safe to fire at
+  // production.
+  const probeBody = JSON.stringify({
+    resource: "droplet",
+    event: "uninstalled",
+    company: { droplet_installation_uuid: "cutover-preflight-not-a-real-installation" },
+  });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = createHmac("sha256", authToken)
+    .update(`${timestamp}.${probeBody}`)
+    .digest("hex");
+
+  const signed = await fetch(targetUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Fluid-Timestamp": String(timestamp),
+      "X-Fluid-Signature": signature,
+    },
+    body: probeBody,
+  }).catch((error: unknown) => {
+    fail(
+      `Signed preflight to ${targetUrl} failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
+
+  // 202 (handled) or 204 (no company matched the made-up uuid, so the handler
+  // returned early) both mean the SIGNATURE was accepted, which is the only
+  // thing being asked. Deliberately NOT "anything but 401": a transport error
+  // or a 500 would otherwise read as success.
+  if (![200, 202, 204].includes(signed.status)) {
+    fail(
+      `Signed preflight to ${targetUrl} answered ${signed.status}.\n\n` +
+        (signed.status === 401
+          ? `  401 means the destination does not accept FLUID_WEBHOOK_AUTH_TOKEN.\n` +
+            `  Writing it onto the droplet.installed / droplet.uninstalled\n` +
+            `  registrations would make every lifecycle delivery fail. Check the\n` +
+            `  token against the destination service's own secret.`
+          : `  Expected 202 or 204. The route is reachable and verifying, but did\n` +
+            `  not complete this request — investigate before repointing.`),
+    );
+  }
+  console.log(
+    `Destination accepted a webhook signed with FLUID_WEBHOOK_AUTH_TOKEN (${signed.status}).`,
+  );
 
   console.log(`Company ${company.fluidShop} (id ${company.id})`);
   console.log(`Repointing ${ours.length} webhook(s) to ${targetUrl}\n`);
