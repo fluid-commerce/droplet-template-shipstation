@@ -28,6 +28,7 @@ GCP_PROJECT="fluid-417204"
 INSTANCE_CONNECTION="fluid-417204:europe-west1:fluid-studioz"
 SECRET_NAME="SHIPSTATION_DATABASE_URL"
 WEBHOOK_TOKEN_SECRET="SHIPSTATION_FLUID_WEBHOOK_AUTH_TOKEN"
+CRON_SECRET_NAME="SHIPSTATION_CRON_SECRET"
 PROXY_PORT=9482
 
 cleanup() {
@@ -112,9 +113,17 @@ if [ "${1:-}" = "--exec" ]; then
   WEBHOOK_TOKEN=$(gcloud secrets versions access latest \
     --secret="$WEBHOOK_TOKEN_SECRET" --project="$GCP_PROJECT" 2>/dev/null || true)
 
+  # CRON_SECRET too: cutover's deep-health preflight calls /api/health/deep on
+  # the destination, which is authenticated with the same bearer the job routes
+  # use. Same handling — into a variable, out through the environment, never
+  # printed and never in argv.
+  CRON_SECRET_VALUE=$(gcloud secrets versions access latest \
+    --secret="$CRON_SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null || true)
+
   # An env var, not argv. Child processes inherit it; `ps` does not show it.
   DATABASE_URL="$LOCAL_DB_URL" \
   FLUID_WEBHOOK_AUTH_TOKEN="${FLUID_WEBHOOK_AUTH_TOKEN:-$WEBHOOK_TOKEN}" \
+  CRON_SECRET="${CRON_SECRET:-$CRON_SECRET_VALUE}" \
     "$@"
 else
   # Split the password out of the url before psql sees it.

@@ -628,6 +628,90 @@ async function repoint(handle: string, args: string[]) {
     console.log(
       `Destination accepted a webhook signed with FLUID_WEBHOOK_AUTH_TOKEN (${signed.status}).`,
     );
+
+    // Third probe: can the destination actually DO the work?
+    //
+    // The two above prove the route is mounted and verifying. Neither touches
+    // the database, and that is exactly the gap that took nuvamed down on
+    // 2026-09-08: the service was reachable, refused unsigned requests,
+    // accepted signed ones, and then 500'd every real order because its Prisma
+    // schema described an `integration_settings` column the database does not
+    // have. Order 46253711 was lost and replayed by hand (STU2-3293).
+    //
+    // /api/health/deep runs the order path's own settings query and decrypts
+    // what it finds, reporting counts only. A destination that cannot pass it
+    // would not have survived its first order.
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) {
+      fail(
+        `CRON_SECRET is not set, so the destination's deep health check cannot\n` +
+          `  be called. That check is what proves this service can read a\n` +
+          `  company's ShipStation credentials at all — reachability and\n` +
+          `  signatures do not.\n\n` +
+          `  Run through scripts/db-connect.sh --exec, which supplies it.`,
+      );
+    }
+
+    // SCOPED to the company being moved. An unscoped deep check aggregates over
+    // every active company, so it answers 200 whenever ANY tenant's settings
+    // decrypt — including when the company we are about to repoint holds no
+    // settings row at all, which is precisely the "reachable but cannot do the
+    // job" shape that took nuvamed down. Ask about the company we are moving.
+    const deepUrl =
+      `${target}/api/health/deep?company=${encodeURIComponent(company.fluidShop)}`;
+    const deep = await fetch(deepUrl, {
+      headers: { authorization: `Bearer ${cronSecret}` },
+    }).catch((error: unknown) => {
+      fail(
+        `Could not reach ${deepUrl}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+
+    const deepBody = (await deep.json().catch(() => null)) as {
+      ok?: boolean;
+      database?: boolean;
+      integrationSettings?: {
+        queried?: number;
+        decryptable?: number;
+        undecryptable?: number;
+        unusable?: number;
+      };
+      scoped?: boolean;
+      error?: string | null;
+    } | null;
+
+    if (deep.status !== 200 || !deepBody?.ok) {
+      const counts = deepBody?.integrationSettings;
+      fail(
+        `${deepUrl} answered ${deep.status} and did not report healthy.\n\n` +
+          `  database reachable:    ${deepBody?.database ?? "unknown"}\n` +
+          `  settings rows queried: ${counts?.queried ?? "unknown"}\n` +
+          `  decryptable + usable:  ${counts?.decryptable ?? "unknown"}\n` +
+          `  UNDECRYPTABLE:         ${counts?.undecryptable ?? "unknown"}\n` +
+          `  decrypted but UNUSABLE: ${counts?.unusable ?? "unknown"}\n` +
+          (deepBody?.error ? `  error: ${deepBody.error}\n` : "") +
+          `\n  The destination is reachable and verifies signatures, but cannot\n` +
+          `  do the work. Repointing would 500 every order. Nothing changed.`,
+      );
+    }
+    // An older build of the endpoint has no `scoped` field and answers about
+    // every company. Treating that as a pass for THIS company would restore the
+    // exact gap this probe was added to close, so refuse it.
+    if (deepBody.scoped !== true) {
+      fail(
+        `${deepUrl} did not report a company-scoped answer.\n\n` +
+          `  The destination is running a build of /api/health/deep that predates\n` +
+          `  ?company= scoping, so a 200 there means "some company's settings\n` +
+          `  decrypt", not "${company.fluidShop}'s do". Deploy the current build\n` +
+          `  before repointing. Nothing has been changed.`,
+      );
+    }
+    console.log(
+      `Destination can read ${company.fluidShop}'s ShipStation credentials ` +
+        `and they are usable for its configured api_version.`,
+    );
   } else {
     // Rails: the WEBHOOK route cannot be probed, but the SERVICE can.
     //
