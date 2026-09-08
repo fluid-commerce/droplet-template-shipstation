@@ -193,8 +193,9 @@ export class FluidClient {
    * installed, and 30 is easy to exceed.
    *
    * Callers that need to find OUR webhooks must therefore page to the end.
-   * scripts/cutover.ts does; registration and cleanup only ever create, so they
-   * do not read this.
+   * Use `listAllWebhooks()` below rather than remembering to do it by hand —
+   * the one place that forgot (the uninstall cleanup) silently examined only
+   * the first page.
    */
   async listWebhooks(params?: {
     page?: number;
@@ -206,6 +207,34 @@ export class FluidClient {
     const suffix = query.size > 0 ? `?${query}` : "";
 
     return this.request(`/api/company/webhooks${suffix}`);
+  }
+
+  /**
+   * Every webhook fluid holds for this company, paged to the end.
+   *
+   * This is the method callers almost always want. A bare `listWebhooks()`
+   * returns one page of 30, and the listing is company-scoped rather than
+   * droplet-scoped, so an active company carrying several droplets exceeds
+   * that easily — 39 for the internal install at the time of writing.
+   *
+   * Fails loudly at the cap instead of returning a truncated list, because a
+   * partial answer is indistinguishable from a complete one at every call site.
+   */
+  async listAllWebhooks(perPage = 100, maxPages = 50): Promise<FluidWebhook[]> {
+    const all: FluidWebhook[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const response = await this.listWebhooks({ page, per_page: perPage });
+      const batch = response?.webhooks ?? [];
+      all.push(...batch);
+      if (batch.length < perPage) return all;
+    }
+    // A plain Error, not FluidError: nothing here failed at the HTTP layer, so
+    // there is no status or body to attach and inventing them would misreport
+    // what happened.
+    throw new Error(
+      `Fluid returned ${maxPages} full pages of webhooks; refusing to act on a ` +
+        `list that may be truncated.`,
+    );
   }
 
   async createWebhook(

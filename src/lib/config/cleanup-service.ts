@@ -28,9 +28,14 @@ async function cleanupWebhooks(
   const enabled = filterEnabled(config.webhooks);
   if (enabled.length === 0) return results;
 
-  let webhooks: Awaited<ReturnType<FluidClient["listWebhooks"]>>["webhooks"];
+  // Paged, not a bare listWebhooks(). That returns 30, and the listing is
+  // company-scoped: a company carrying several droplets goes past that easily.
+  // Reading one page here meant uninstall could fail to find our own webhooks
+  // and leave them registered against a droplet that is gone, with fluid still
+  // delivering to it.
+  let webhooks: Awaited<ReturnType<FluidClient["listAllWebhooks"]>>;
   try {
-    webhooks = (await client.listWebhooks()).webhooks ?? [];
+    webhooks = await client.listAllWebhooks();
   } catch (error) {
     console.error(
       "[Cleanup] Failed to list webhooks:",

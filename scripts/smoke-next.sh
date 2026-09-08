@@ -120,9 +120,22 @@ check "no callback route is exposed" 404 \
 if [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
   BODY='{"resource":"droplet","event":"uninstalled","company":{"droplet_installation_uuid":"smoke-not-a-real-installation"}}'
   TS=$(date +%s)
-  SIG=$(printf '%s.%s' "$TS" "$BODY" \
-    | openssl dgst -sha256 -hmac "$FLUID_WEBHOOK_AUTH_TOKEN" \
-    | sed 's/^.*= //')
+  # node, not `openssl -hmac "$TOKEN"`.
+  #
+  # openssl takes the key as a COMMAND LINE argument, so for the life of that
+  # process any local user's `ps` shows the shared webhook secret in full — and
+  # that secret is enough to forge a lifecycle webhook, which is the one thing
+  # this droplet authenticates installs with. node reads it from the
+  # environment instead, where argv cannot leak it.
+  SIG=$(SMOKE_TS="$TS" SMOKE_BODY="$BODY" node -e '
+    const crypto = require("node:crypto");
+    process.stdout.write(
+      crypto
+        .createHmac("sha256", process.env.FLUID_WEBHOOK_AUTH_TOKEN)
+        .update(`${process.env.SMOKE_TS}.${process.env.SMOKE_BODY}`)
+        .digest("hex"),
+    );
+  ')
   SIGNED=$(code -X POST "$BASE/api/webhooks" \
     -H 'content-type: application/json' \
     -H "X-Fluid-Timestamp: $TS" \

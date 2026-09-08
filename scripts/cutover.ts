@@ -207,33 +207,16 @@ function isBootstrap(webhook: FluidWebhook): boolean {
 /**
  * Every webhook fluid holds for this company, paged to the end.
  *
- * NOT a bare `listWebhooks()`. That endpoint defaults to 30 per page
- * (`Api::Company::Webhooks::IndexAction`), and the listing is COMPANY-scoped:
- * an active company carries a webhook for every droplet it has installed.
- * nuvamed has well over thirty. A single unpaged call returned the first page
- * only, which on the internal `fluid.fluid.app` install silently omitted an
- * `order.created` of ours — a repoint would have moved two webhooks of three,
- * verified the two it knew about, and reported success.
- *
- * The page cap fails loudly rather than returning a truncated list, because a
- * partial answer here is indistinguishable from a complete one at every call
- * site above.
+ * Delegates to the client's `listAllWebhooks` rather than paging here, so the
+ * cutover tool and the uninstall cleanup cannot drift on this. A bare
+ * `listWebhooks()` returns 30, and the listing is COMPANY-scoped: an active
+ * company carries a webhook for every droplet it has installed. fluid.fluid.app
+ * has 39. An unpaged call silently omitted an `order.created` of ours, and a
+ * repoint would have moved two webhooks of three, verified the two it knew
+ * about, and reported success.
  */
-const PER_PAGE = 100;
-const MAX_PAGES = 50;
-
 async function listWebhooks(client: FluidClient): Promise<FluidWebhook[]> {
-  const all: FluidWebhook[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const response = await client.listWebhooks({ page, per_page: PER_PAGE });
-    const batch = (response?.webhooks ?? []) as FluidWebhook[];
-    all.push(...batch);
-    if (batch.length < PER_PAGE) return all;
-  }
-  fail(
-    `Fluid returned ${MAX_PAGES} full pages of webhooks (${MAX_PAGES * PER_PAGE}+) ` +
-      `for this company. Refusing to act on a list that may be truncated.`,
-  );
+  return (await client.listAllWebhooks()) as FluidWebhook[];
 }
 
 /** Reads `--flag value` out of argv, or returns undefined. */

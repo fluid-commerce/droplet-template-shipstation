@@ -20,8 +20,15 @@ const config: DropletConfig = {
 const listWebhooks = vi.fn();
 const deleteWebhook = vi.fn(async () => {});
 
+// Cleanup calls listAllWebhooks (the paged one), not listWebhooks. The fake
+// derives it from the same mock so each test still sets up one listing, while
+// the double keeps exercising the method the code actually calls — a stub that
+// only offered listWebhooks would have gone on passing after cleanup moved to
+// the paged call, which is exactly how the one-page bug survived.
+const listAllWebhooks = vi.fn(async () => (await listWebhooks()).webhooks ?? []);
+
 const client = () =>
-  ({ listWebhooks, deleteWebhook }) as unknown as Parameters<
+  ({ listWebhooks, listAllWebhooks, deleteWebhook }) as unknown as Parameters<
     typeof cleanupAllFeatures
   >[0];
 
