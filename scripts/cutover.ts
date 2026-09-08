@@ -383,25 +383,46 @@ async function repoint(handle: string, args: string[]) {
   // state where edits and cancellations reach nothing — the exact silent-gap
   // shape this tool exists to avoid.
   const enabled = dropletConfig.webhooks.filter((w) => w.enabled !== false);
+  //
+  // ACTIVE registrations only. An `active: false` row exists but delivers
+  // nothing, and the update below preserves that flag — so counting it as
+  // present would move a dead registration, verify its url, and report the
+  // tenant cut over while that event silently reaches nobody. Inactive is
+  // reported separately from missing, because the remedy differs.
+  const nonBootstrap = ours.filter((w) => !isBootstrap(w));
   const found = new Set(
-    ours.filter((w) => !isBootstrap(w)).map((w) => `${w.resource}.${w.event}`),
+    nonBootstrap
+      .filter((w) => w.active !== false)
+      .map((w) => `${w.resource}.${w.event}`),
+  );
+  const inactive = new Set(
+    nonBootstrap
+      .filter((w) => w.active === false)
+      .map((w) => `${w.resource}.${w.event}`),
   );
   const absent = enabled
     .map((w) => `${w.resource}.${w.event}`)
     .filter((name) => !found.has(name));
   if (absent.length > 0) {
+    const dead = absent.filter((name) => inactive.has(name));
+    const missing = absent.filter((name) => !inactive.has(name));
     fail(
       `Refusing to repoint ${company.fluidShop}.\n\n` +
-        `  This droplet subscribes to ${enabled.length} event(s), and fluid holds no\n` +
-        `  registration of ours for: ${absent.join(", ")}.\n\n` +
-        `  Install-time registration failures are logged and swallowed, so this is\n` +
-        `  a state a live company can genuinely be in. Moving what does exist would\n` +
-        `  report success on a tenant whose ${absent.join("/")} still reaches nothing.\n\n` +
-        `  Re-register for this company first. Nothing has been changed.`,
+        (missing.length > 0
+          ? `  fluid holds no registration of ours for: ${missing.join(", ")}.\n` +
+            `  Install-time registration failures are logged and swallowed, so this\n` +
+            `  is a state a live company can genuinely be in. Re-register first.\n\n`
+          : "") +
+        (dead.length > 0
+          ? `  Registered but INACTIVE: ${dead.join(", ")}.\n` +
+            `  Those rows exist and deliver nothing, and this tool preserves the\n` +
+            `  active flag — so moving them would verify their url and report the\n` +
+            `  tenant cut over while the event still reaches nobody. Re-activate\n` +
+            `  them first.\n\n`
+          : "") +
+        `  Nothing has been changed.`,
     );
   }
-
-
   const holdsToken = !!company.webhookVerificationToken;
   const blocked = ours.filter((w) => !isBootstrap(w) && !holdsToken);
   if (blocked.length > 0) {
@@ -432,14 +453,33 @@ async function repoint(handle: string, args: string[]) {
       }`,
     );
   });
-  if (probe.status === 404) {
+  // EXACTLY 401. Not merely "not 404".
+  //
+  // The webhook route fails closed, so an unsigned request has one correct
+  // answer and every other status means something is wrong in a way that
+  // repointing would make live:
+  //
+  //   404  nothing serves the route
+  //   200  the route did NOT verify — an unsigned request was accepted, which
+  //        is the one outcome worse than the route being missing
+  //   403  something in front of the service is refusing us
+  //   5xx  the route is mounted and broken
+  //
+  // Accepting anything but 401 was the earlier version's flaw: it proved a
+  // route existed, not that it was doing its job.
+  if (probe.status !== 401) {
     fail(
-      `${targetUrl} returns 404 — nothing serves that route.\n\n` +
-        `  Check --url and --webhook-path. Registering it would leave every\n` +
-        `  delivery 404ing behind fluid's retry, which looks like silence.`,
+      `${targetUrl} answered ${probe.status} to an unsigned webhook; expected 401.\n\n` +
+        (probe.status === 404
+          ? `  404 means nothing serves that route — check --url and --webhook-path.`
+          : probe.status === 200
+            ? `  200 means the route ACCEPTED an unsigned request. Do not point\n` +
+              `  production traffic at it: it is not verifying signatures.`
+            : `  The route is reachable but not answering as a healthy webhook\n` +
+              `  endpoint should. Investigate before repointing anything.`),
     );
   }
-  console.log(`Destination ${targetUrl} answered ${probe.status} (not 404).`);
+  console.log(`Destination ${targetUrl} refused an unsigned webhook with 401.`);
 
   console.log(`Company ${company.fluidShop} (id ${company.id})`);
   console.log(`Repointing ${ours.length} webhook(s) to ${targetUrl}\n`);
