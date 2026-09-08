@@ -680,8 +680,23 @@ async function repoint(handle: string, args: string[]) {
     const already = webhook.url === targetUrl;
     const label = `  ${describe(webhook).padEnd(22)} ${webhook.url} ->`;
 
-    if (already) {
-      console.log(`${label} (already there)`);
+    // A webhook already at the destination is still WRITTEN under APPLY.
+    //
+    // It used to be skipped as complete. But the url is not the only thing
+    // this update sets — it also sets auth_token, and fluid never returns the
+    // stored one, so there is no way to look at a registration and tell which
+    // token it carries. A registration moved by hand, or left behind by a
+    // partial run, can sit at exactly the right url with the WRONG token:
+    // fluid signs with that stale value, this app verifies against
+    // webhookVerificationToken, and every delivery 401s while the tool reports
+    // the company complete.
+    //
+    // The update is idempotent, so rewriting costs one API call and removes a
+    // state nothing else can detect. Dry run still prints the distinction,
+    // because an operator reading the plan should see which rows are moving
+    // and which are only being re-tokened.
+    if (already && !APPLY) {
+      console.log(`${label} (already there; token would be rewritten)`);
       continue;
     }
     if (!APPLY) {
@@ -726,7 +741,9 @@ async function repoint(handle: string, args: string[]) {
       http_method: "post",
       active: webhook.active ?? true,
     });
-    console.log(`${label} ${targetUrl}   updated`);
+    console.log(
+      `${label} ${targetUrl}   ${already ? "token rewritten" : "updated"}`,
+    );
   }
 
   if (!APPLY) {
