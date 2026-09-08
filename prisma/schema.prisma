@@ -126,11 +126,29 @@ model Event {
 model IntegrationSetting {
   id BigInt @id @default(autoincrement())
 
-  companyId   BigInt  @unique @map("company_id")
-  enabled     Boolean @default(false)
+  companyId BigInt  @unique @map("company_id")
+  enabled   Boolean @default(false)
   /// Active Record Encryption envelope. See src/lib/rails/encrypted-attribute.ts.
-  settings    Json?   @default("{}")
-  credentials Json?   @default("{}")
+  /// This is where the ShipStation api_key / api_secret / v2_api_key live —
+  /// see secretsOf() in src/lib/integration-settings.ts. It is the ONLY column
+  /// this app reads for them.
+  settings  Json?   @default("{}")
+
+  // NO `credentials` COLUMN. It is in db/migrate/20250801164111 and in
+  // db/schema.rb, and it does not exist in the production database — that
+  // migration is recorded in schema_migrations, so the table has drifted from
+  // the repo out of band. Production instead carries a `token` column that is
+  // NULL in every row and referenced nowhere in the Rails app.
+  //
+  // Declaring it here was not a harmless extra field. Prisma selects every
+  // declared column, so `integrationSetting.findUnique()` failed with
+  // "The column integration_settings.credentials does not exist" — which meant
+  // EVERY order.created 500'd the moment this app took live traffic. It did:
+  // nuvamed was cut over on 2026-09-08 and order 46253711 had to be replayed
+  // by hand. See STU2-3293.
+  //
+  // Do not add it back from db/schema.rb. schema.rb is not the authority here;
+  // the database is.
 
   /// Hold new orders instead of pushing them to ShipStation immediately.
   holdForBatch Boolean @default(false) @map("hold_for_batch")
