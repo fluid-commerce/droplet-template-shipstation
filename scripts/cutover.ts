@@ -81,6 +81,11 @@ import { createHmac } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { createFluidClient, type FluidClient } from "@/lib/fluid";
 import { dropletConfig } from "@/lib/config";
+import {
+  normaliseOrigin as normaliseOriginOrThrow,
+  normalisePath as normalisePathOrThrow,
+  CutoverUrlError,
+} from "@/lib/cutover/urls";
 
 const APPLY = process.env.APPLY === "1";
 
@@ -127,40 +132,28 @@ function fail(message: string): never {
 }
 
 /**
- * An operator-supplied `--url`, reduced to something safe to concatenate a path
- * onto. Only http(s), and no query or fragment: `${base}${path}` on
- * `https://host/?x` produces `https://host/?x/api/webhooks`, which registers a
- * url nothing serves.
+ * The url helpers live in src/lib/cutover/urls.ts so they can be TESTED — this
+ * file calls main() at import, so a test importing it would run the tool.
+ * They throw; here that becomes an exit.
  */
 function normaliseOrigin(value: string, flag: string): string {
-  let parsed: URL;
   try {
-    parsed = new URL(value);
-  } catch {
-    return fail(`${flag} must be an absolute https url; got "${value}".`);
+    return normaliseOriginOrThrow(value, flag);
+  } catch (error) {
+    if (error instanceof CutoverUrlError) fail(error.message);
+    throw error;
   }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    fail(`${flag} must be http(s); got "${value}".`);
-  }
-  if (parsed.search || parsed.hash) {
-    fail(`${flag} must not carry a query or fragment; got "${value}".`);
-  }
-  return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, "");
 }
 
-/**
- * A `--webhook-path`, checked before it is concatenated. A value not beginning
- * with a single "/" is not a path: `${origin}@evil.example/x` has host
- * evil.example, so the flag would be choosing the destination host.
- */
 function normalisePath(value: string, flag: string): string {
-  if (!value.startsWith("/") || value.startsWith("//")) {
-    fail(
-      `${flag} must be an absolute path beginning with a single "/"; got "${value}".`,
-    );
+  try {
+    return normalisePathOrThrow(value, flag);
+  } catch (error) {
+    if (error instanceof CutoverUrlError) fail(error.message);
+    throw error;
   }
-  return value;
 }
+
 
 async function loadCompany(handle: string) {
   const company = await prisma.company.findFirst({
