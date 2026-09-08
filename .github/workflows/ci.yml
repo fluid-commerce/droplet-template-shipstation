@@ -68,7 +68,18 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Scan for common Rails security vulnerabilities using static analysis
-        run: bin/brakeman --no-pager
+        # Skip the EOL dependency checks (EOLRails/EOLRuby). These are
+        # weak-confidence "unmaintained dependency" nags that hard-fail the build
+        # on a CALENDAR DATE rather than on anything in the code: brakeman's
+        # CheckEOLRails warns 60 days ahead of a series going out of support, so
+        # this job went from green to red at midnight with no commit involved.
+        # Observed here on 2026-09-08 — "Support for Rails 8.0.2 ends on
+        # 2026-11-07", exactly 60 days out, exit code 3.
+        #
+        # Framework upgrades are tracked separately; real security checks still
+        # fail the build. Same line as fluid-sovos-gtd-droplet, which already
+        # carries it.
+        run: bin/brakeman --no-pager --except EOLRails,EOLRuby
 
   rubocop:
     runs-on: ubuntu-latest
