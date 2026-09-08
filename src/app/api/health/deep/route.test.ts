@@ -34,6 +34,16 @@ const v1Complete = { apiVersion: "v1", settings: { api_key: "k", api_secret: "s"
 const v1KeyOnly = { apiVersion: "v1", settings: { api_key: "k" } };
 const v2Complete = { apiVersion: "v2", settings: { v2_api_key: "v2k" } };
 
+/**
+ * The scoped branch resolves the company twice — once by handle, once the way
+ * the order path does — so the default double returns the same row for both.
+ */
+function scopedCompany(row: Record<string, unknown> = {}) {
+  const company = { id: 1n, active: true, fluidCompanyId: 42n, ...row };
+  mockPrisma.company.findFirst.mockResolvedValue(company);
+  return company;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.CRON_SECRET = "test-cron-secret";
@@ -48,7 +58,7 @@ describe("GET /api/health/deep", () => {
   });
 
   it("reports healthy for a company whose settings decrypt and are usable", async () => {
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    scopedCompany();
     mockPrisma.integrationSetting.findUnique.mockResolvedValue(v1Complete);
 
     const response = await GET(request("?company=nuvamed.fluid.app"));
@@ -62,7 +72,7 @@ describe("GET /api/health/deep", () => {
 
   it("fails when the NAMED company has no settings row, even though another company is healthy", async () => {
     // The aggregate bug, exactly: sibling tenants are fine, this one is not.
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    scopedCompany();
     mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
 
     const response = await GET(request("?company=nuvamed.fluid.app"));
@@ -92,7 +102,7 @@ describe("GET /api/health/deep", () => {
   it("fails a v1 company holding an api_key but no api_secret", async () => {
     // Decrypts fine. v1Headers would send `Basic k:`, which ShipStation 401s on
     // every order — so this must NOT count as healthy.
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    scopedCompany();
     mockPrisma.integrationSetting.findUnique.mockResolvedValue(v1KeyOnly);
 
     const response = await GET(request("?company=nuvamed.fluid.app"));
@@ -108,7 +118,7 @@ describe("GET /api/health/deep", () => {
     // createShipstationOrder POSTs with v1Headers unconditionally and never
     // consults api_version, so v2-only credentials submit `Basic :`. Calling
     // this healthy would cut over a company whose orders cannot land.
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    scopedCompany();
     mockPrisma.integrationSetting.findUnique.mockResolvedValue(v2Complete);
 
     const response = await GET(request("?company=nuvamed.fluid.app"));
@@ -117,7 +127,7 @@ describe("GET /api/health/deep", () => {
   });
 
   it("accepts a v2-flagged company that still holds the v1 pair the order path uses", async () => {
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    scopedCompany();
     mockPrisma.integrationSetting.findUnique.mockResolvedValue({
       apiVersion: "v2",
       settings: { api_key: "k", api_secret: "s" },
@@ -128,11 +138,26 @@ describe("GET /api/health/deep", () => {
     expect((await response.json()).ok).toBe(true);
   });
 
+  it("fails when fluid_company_id resolves to a different row than the shop does", async () => {
+    // fluid_company_id is indexed but not unique, and the order path resolves by
+    // it with an unordered findFirst -- so a duplicate would serve this
+    // company's orders from another company's ShipStation credentials.
+    mockPrisma.company.findFirst
+      .mockResolvedValueOnce({ id: 1n, active: true, fluidCompanyId: 42n })
+      .mockResolvedValueOnce({ id: 2n, active: true, fluidCompanyId: 42n });
+
+    const response = await GET(request("?company=nuvamed.fluid.app"));
+
+    expect(response.status).toBe(503);
+    expect((await response.json()).error).toMatch(/different row by fluid_company_id/);
+    expect(mockPrisma.integrationSetting.findUnique).not.toHaveBeenCalled();
+  });
+
   it("asks for the settings row WITHOUT a select, so a drifted column still throws", async () => {
     // The regression this guards: narrowing the query to the fields this route
     // reads would stop a phantom column from throwing here while the order
     // path's unqualified findUnique still failed on it.
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    scopedCompany();
     mockPrisma.integrationSetting.findUnique.mockResolvedValue(v1Complete);
 
     await GET(request("?company=nuvamed.fluid.app"));
@@ -165,7 +190,7 @@ describe("GET /api/health/deep", () => {
 
   it("reports the failing query rather than throwing when the schema has drifted", async () => {
     // The nuvamed failure itself.
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1n, active: true });
+    scopedCompany();
     mockPrisma.integrationSetting.findUnique.mockRejectedValue(
       new Error(
         "The column integration_settings.credentials does not exist in the current database.\nmore",

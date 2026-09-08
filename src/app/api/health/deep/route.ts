@@ -125,6 +125,29 @@ export async function GET(request: Request): Promise<Response> {
         return NextResponse.json(result, { status: 503 });
       }
 
+      // Resolve the company a SECOND time, the way the order path resolves it.
+      //
+      // A webhook does not carry our primary key; `createShipstationOrder` does
+      // `company.findFirst({ where: { fluidCompanyId } })`, and
+      // `fluid_company_id` carries an index but NOT a unique constraint, and
+      // that findFirst has no ordering. So two rows sharing a fluid_company_id
+      // would let this check pass on the row we resolved by shop while every
+      // real order was served from the other one — reading a different
+      // company's ShipStation credentials, or none. There are no duplicates in
+      // production today (measured 2026-09-08, zero groups), which is precisely
+      // why this is worth asserting: it is cheap to keep true and expensive to
+      // discover has stopped being true, and this check exists to catch the
+      // gaps between "reachable" and "can do the job".
+      const asTheOrderPathResolvesIt = await prisma.company.findFirst({
+        where: { fluidCompanyId: company.fluidCompanyId },
+      });
+      if (asTheOrderPathResolvesIt?.id !== company.id) {
+        result.error =
+          `company "${handle}" resolves to a different row by fluid_company_id ` +
+          `than by shop, so orders would be served from another company's settings`;
+        return NextResponse.json(result, { status: 503 });
+      }
+
       // findIntegrationSetting, NOT a hand-written query with a `select`.
       //
       // This must be the order path's own call, unqualified. Prisma only asks
