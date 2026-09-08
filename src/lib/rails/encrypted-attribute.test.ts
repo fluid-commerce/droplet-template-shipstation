@@ -23,7 +23,18 @@ import {
 
 const DETERMINISTIC_KEY = "test_deterministic_key_0123456789";
 const SALT = "test_key_derivation_salt_01234567";
-const key = deriveKey(DETERMINISTIC_KEY, SALT);
+/**
+ * The vectors below were generated with the SHA1 derivation, so they are
+ * decrypted with it explicitly. That is not the app's default any more: Rails
+ * 7.1's framework defaults moved `hash_digest_class` to SHA256 and
+ * config/application.rb declares `load_defaults 8.0`, so the running app
+ * derives with SHA256 and every row in production was written under it.
+ * Deriving with the wrong one yields a valid-looking 32-byte key that fails GCM
+ * authentication on every row — which is precisely what happened in production
+ * (STU2-3293), and what these tests did NOT catch, because the vectors and the
+ * implementation agreed with each other rather than with the deployed Rails app.
+ */
+const key = deriveKey(DETERMINISTIC_KEY, SALT, "sha1");
 
 const SHORT_PLAINTEXT = '{"api_key":"KEY123","api_secret":"SEC456"}';
 const SHORT_MESSAGE = {
@@ -45,10 +56,21 @@ const LONG_MESSAGE = {
 };
 
 describe("deriveKey", () => {
-  it("derives the key Rails derives", () => {
-    // ActiveSupport::KeyGenerator's SHA1 default, 2**16 iterations.
-    expect(key.toString("hex")).toBe(
+  it("derives the SHA1 key, for an app still on 6.1 framework defaults", () => {
+    expect(deriveKey(DETERMINISTIC_KEY, SALT, "sha1").toString("hex")).toBe(
       "eddda6511100bb98e6bbc42ceedbff39cd56825f0f6f4d52299d2cdc1922ccd1",
+    );
+  });
+
+  it("defaults to SHA256, which is what load_defaults 7.1+ derives with", () => {
+    // PBKDF2-HMAC-SHA256(secret, salt, 2**16, 32) — the derivation the deployed
+    // Rails app uses. Pinned so a change of default is a test failure and not a
+    // fleet-wide inability to read credentials.
+    expect(deriveKey(DETERMINISTIC_KEY, SALT).toString("hex")).toBe(
+      deriveKey(DETERMINISTIC_KEY, SALT, "sha256").toString("hex"),
+    );
+    expect(deriveKey(DETERMINISTIC_KEY, SALT, "sha256")).not.toEqual(
+      deriveKey(DETERMINISTIC_KEY, SALT, "sha1"),
     );
   });
 });
