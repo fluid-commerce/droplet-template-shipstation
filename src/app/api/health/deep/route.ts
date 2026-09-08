@@ -8,8 +8,8 @@
  * not exist in the database, so every `order.created` 500'd. Nothing before
  * this endpoint touched that table (STU2-3293).
  *
- * Two things are checked here, because they are the two that a deploy can get
- * wrong while looking perfectly healthy from outside:
+ * Three things are checked, because they are the three a deploy can get wrong
+ * while looking perfectly healthy from outside:
  *
  *  1. The `integration_settings` query the order path runs. A schema that
  *     describes a different table than the one that exists fails here.
@@ -17,6 +17,20 @@
  *     encryption keys are supplied as three separate secrets; wire any of them
  *     wrongly and the service still starts, still verifies webhook signatures,
  *     and still cannot read a single company's ShipStation credentials.
+ *  3. Whether what decrypts is USABLE for the API version that company is set
+ *     to. A blob holding only `api_key` decrypts fine and then sends
+ *     `Basic key:` to ShipStation, which 401s every order.
+ *
+ * ## Ask about a company, not about "some company"
+ *
+ * `?company=<fluid_shop | fluid_company_id | id>` scopes all of the above to
+ * ONE company and is what a cutover must use. Without it the answer aggregates,
+ * and an aggregate cannot gate a per-company move: nuvamed could hold no
+ * settings row at all while another tenant's row decrypts cleanly, and this
+ * endpoint would answer 200 while `createShipstationOrder` threw
+ * "Integration settings not found" for every nuvamed order. `scripts/cutover.ts`
+ * repoints one company at a time (`loadCompany`), so it always passes the
+ * company it is about to move.
  *
  * Only counts and booleans are returned — never a decrypted value, never a
  * company's credentials, and never which key failed.
@@ -29,55 +43,136 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/db";
 import { isAuthorizedJobRequest } from "@/lib/jobs/authorize";
-import { secretsOf } from "@/lib/integration-settings";
+import { secretsOf, type ShipstationSecrets } from "@/lib/integration-settings";
+
+type SettingRow = {
+  apiVersion: string;
+  settings: unknown;
+};
+
+/**
+ * Whether these secrets would actually authenticate against the API version
+ * this company is configured for.
+ *
+ * v1 is HTTP Basic over `api_key:api_secret` — `v1Headers` interpolates both
+ * and falls back to "" for either, so a half-configured row produces a
+ * syntactically valid header that ShipStation rejects. v2 is a single
+ * `v2_api_key`. Mirrors `hasV1Credentials` in src/lib/shipstation/client.ts;
+ * duplicated as a value check rather than imported because that helper takes
+ * the camelCase credentials shape and pulling it in here would drag the
+ * ShipStation client into a health route.
+ */
+function credentialsUsable(secrets: ShipstationSecrets, apiVersion: string): boolean {
+  if (apiVersion === "v2") return !!secrets.v2_api_key;
+  return !!secrets.api_key && !!secrets.api_secret;
+}
 
 export async function GET(request: Request): Promise<Response> {
   if (!isAuthorizedJobRequest(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const handle = new URL(request.url).searchParams.get("company")?.trim() || null;
+
   const result = {
     ok: false,
     database: false,
-    integrationSettings: { queried: 0, decryptable: 0, undecryptable: 0 },
+    /** Echoed back so a caller cannot mistake an aggregate answer for a scoped one. */
+    company: handle,
+    scoped: handle !== null,
+    integrationSettings: {
+      queried: 0,
+      decryptable: 0,
+      undecryptable: 0,
+      /** Decrypted, but missing a credential the configured api_version needs. */
+      unusable: 0,
+    },
     error: null as string | null,
   };
 
   try {
-    const companies = await prisma.company.findMany({
-      where: { active: true },
-      select: { id: true },
-    });
-    result.database = true;
+    let rows: SettingRow[];
 
-    for (const company of companies) {
+    if (handle) {
+      // One company. A handle that matches nothing, or matches a company with
+      // no settings row, is a FAILED check — not an empty aggregate. Asking
+      // about nuvamed and being told about someone else is the whole bug this
+      // parameter exists to prevent.
+      const company = await prisma.company.findFirst({
+        where: {
+          OR: [
+            { fluidShop: handle },
+            { fluidCompanyId: /^\d+$/.test(handle) ? BigInt(handle) : BigInt(-1) },
+            { id: /^\d+$/.test(handle) ? BigInt(handle) : BigInt(-1) },
+          ],
+        },
+        select: { id: true, active: true },
+      });
+      result.database = true;
+
+      if (!company) {
+        result.error = `no company matches "${handle}"`;
+        return NextResponse.json(result, { status: 503 });
+      }
+      if (!company.active) {
+        result.error = `company "${handle}" is not active`;
+        return NextResponse.json(result, { status: 503 });
+      }
+
       // The exact query the order path runs. A schema/table mismatch throws
       // here, which is the whole point.
       const setting = await prisma.integrationSetting.findUnique({
         where: { companyId: company.id },
+        select: { apiVersion: true, settings: true },
       });
-      if (!setting) continue;
+      if (!setting) {
+        result.error = `company "${handle}" has no integration_settings row`;
+        return NextResponse.json(result, { status: 503 });
+      }
+      rows = [setting];
+    } else {
+      const companies = await prisma.company.findMany({
+        where: { active: true },
+        select: { id: true },
+      });
+      result.database = true;
 
-      result.integrationSettings.queried += 1;
-      try {
-        const secrets = secretsOf(setting);
-        // Decrypting to an empty object is not proof of anything — a company
-        // may simply not have configured ShipStation yet — so only a settings
-        // blob that yields at least one key counts as decryptable.
-        if (Object.keys(secrets).length > 0) {
-          result.integrationSettings.decryptable += 1;
-        }
-      } catch {
-        result.integrationSettings.undecryptable += 1;
+      rows = [];
+      for (const company of companies) {
+        const setting = await prisma.integrationSetting.findUnique({
+          where: { companyId: company.id },
+          select: { apiVersion: true, settings: true },
+        });
+        if (setting) rows.push(setting);
       }
     }
 
-    // Healthy means: the query works, and every configured row that exists
-    // could be read. A service with no configured companies is NOT declared
-    // healthy — there would be nothing to prove.
+    for (const setting of rows) {
+      result.integrationSettings.queried += 1;
+      let secrets: ShipstationSecrets;
+      try {
+        secrets = secretsOf(setting as Parameters<typeof secretsOf>[0]);
+      } catch {
+        result.integrationSettings.undecryptable += 1;
+        continue;
+      }
+      // Decrypting to an empty object is not proof of anything — a company may
+      // simply not have configured ShipStation yet — and neither is decrypting
+      // to a PARTIAL one, which authenticates against nothing.
+      if (credentialsUsable(secrets, setting.apiVersion)) {
+        result.integrationSettings.decryptable += 1;
+      } else {
+        result.integrationSettings.unusable += 1;
+      }
+    }
+
+    // Healthy means: the query works, and every row we looked at could be read
+    // AND used. A service with no configured companies is NOT declared healthy
+    // — there would be nothing to prove.
     result.ok =
       result.integrationSettings.queried > 0 &&
       result.integrationSettings.undecryptable === 0 &&
+      result.integrationSettings.unusable === 0 &&
       result.integrationSettings.decryptable > 0;
   } catch (error) {
     // The message, never the payload: a Prisma error quotes the failing query.

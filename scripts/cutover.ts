@@ -652,7 +652,13 @@ async function repoint(handle: string, args: string[]) {
       );
     }
 
-    const deepUrl = `${target}/api/health/deep`;
+    // SCOPED to the company being moved. An unscoped deep check aggregates over
+    // every active company, so it answers 200 whenever ANY tenant's settings
+    // decrypt — including when the company we are about to repoint holds no
+    // settings row at all, which is precisely the "reachable but cannot do the
+    // job" shape that took nuvamed down. Ask about the company we are moving.
+    const deepUrl =
+      `${target}/api/health/deep?company=${encodeURIComponent(company.fluidShop)}`;
     const deep = await fetch(deepUrl, {
       headers: { authorization: `Bearer ${cronSecret}` },
     }).catch((error: unknown) => {
@@ -670,7 +676,9 @@ async function repoint(handle: string, args: string[]) {
         queried?: number;
         decryptable?: number;
         undecryptable?: number;
+        unusable?: number;
       };
+      scoped?: boolean;
       error?: string | null;
     } | null;
 
@@ -680,17 +688,29 @@ async function repoint(handle: string, args: string[]) {
         `${deepUrl} answered ${deep.status} and did not report healthy.\n\n` +
           `  database reachable:    ${deepBody?.database ?? "unknown"}\n` +
           `  settings rows queried: ${counts?.queried ?? "unknown"}\n` +
-          `  decryptable:           ${counts?.decryptable ?? "unknown"}\n` +
+          `  decryptable + usable:  ${counts?.decryptable ?? "unknown"}\n` +
           `  UNDECRYPTABLE:         ${counts?.undecryptable ?? "unknown"}\n` +
+          `  decrypted but UNUSABLE: ${counts?.unusable ?? "unknown"}\n` +
           (deepBody?.error ? `  error: ${deepBody.error}\n` : "") +
           `\n  The destination is reachable and verifies signatures, but cannot\n` +
           `  do the work. Repointing would 500 every order. Nothing changed.`,
       );
     }
+    // An older build of the endpoint has no `scoped` field and answers about
+    // every company. Treating that as a pass for THIS company would restore the
+    // exact gap this probe was added to close, so refuse it.
+    if (deepBody.scoped !== true) {
+      fail(
+        `${deepUrl} did not report a company-scoped answer.\n\n` +
+          `  The destination is running a build of /api/health/deep that predates\n` +
+          `  ?company= scoping, so a 200 there means "some company's settings\n` +
+          `  decrypt", not "${company.fluidShop}'s do". Deploy the current build\n` +
+          `  before repointing. Nothing has been changed.`,
+      );
+    }
     console.log(
-      `Destination can read its data: ` +
-        `${deepBody.integrationSettings?.decryptable} of ` +
-        `${deepBody.integrationSettings?.queried} companies' settings decrypted.`,
+      `Destination can read ${company.fluidShop}'s ShipStation credentials ` +
+        `and they are usable for its configured api_version.`,
     );
   } else {
     // Rails: the WEBHOOK route cannot be probed, but the SERVICE can.
