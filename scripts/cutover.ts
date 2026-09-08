@@ -345,14 +345,30 @@ async function repoint(handle: string, args: string[]) {
   // destination (already cut over, or a re-run) and wherever this deployment
   // thinks it lives. Without the second, a first cutover from Rails matches
   // nothing and exits zero having moved nothing.
-  const from = flag(args, "--from");
-  const origins = [
-    target,
-    from ? normaliseOrigin(from, "--from") : null,
-    process.env.FLUID_DROPLET_URL
-      ? normaliseOrigin(process.env.FLUID_DROPLET_URL, "FLUID_DROPLET_URL")
-      : null,
-  ].filter((value): value is string => value !== null);
+  // --from is REQUIRED. It names where the registrations are NOW.
+  //
+  // It used to fall back to FLUID_DROPLET_URL, and db-connect.sh --exec does
+  // not supply that — so from a clean shell the documented command searched
+  // only the destination, matched nothing, and exited. It failed safe (nothing
+  // was written) but the command as documented did not work, and the fix an
+  // operator would reach for under time pressure is to start guessing flags.
+  //
+  // Depending on ambient environment for "where things are now" is the wrong
+  // shape regardless: FLUID_DROPLET_URL is whatever this deployment was
+  // configured with, which is exactly the value that stops being true halfway
+  // through a migration.
+  const fromFlag = flag(args, "--from");
+  if (!fromFlag) {
+    fail(
+      `repoint needs --from <current origin>.\n\n` +
+        `  It names where the registrations are NOW, and it is how they are\n` +
+        `  found: without it only the destination is searched, so a first\n` +
+        `  cutover matches nothing and exits having done nothing.\n\n` +
+        `  cut over:  --from <rails-service> --url <next-service>  --webhook-path ${NEXT_WEBHOOK_PATH}\n` +
+        `  roll back: --from <next-service>  --url <rails-service> --webhook-path ${RAILS_WEBHOOK_PATH}`,
+    );
+  }
+  const origins = [target, normaliseOrigin(fromFlag, "--from")];
 
   const webhooks = await listWebhooks(client);
   const ours = webhooks.filter((w) => isOurs(w, origins));
@@ -696,7 +712,7 @@ async function main() {
     console.error(
       `usage:\n` +
         `  pnpm cutover status  <fluid_shop> [--url <base>]\n` +
-        `  APPLY=1 pnpm cutover repoint <fluid_shop> --url <base> --webhook-path <path> [--from <base>]`,
+        `  APPLY=1 pnpm cutover repoint <fluid_shop> --from <current> --url <destination> --webhook-path <path>`,
     );
     process.exit(2);
   }
