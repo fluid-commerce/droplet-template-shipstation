@@ -165,6 +165,64 @@ function normalisePath(value: string, flag: string): string {
 }
 
 
+/**
+ * The configured subscriptions this company is NOT ready to serve.
+ *
+ * Shared by status and repoint on purpose. status is the command an operator
+ * uses to decide whether a company can be cut over, so it has to predict
+ * repoint's verdict — it used to print "N webhook(s) would be repointed" while
+ * repoint went on to refuse the same company outright.
+ *
+ * `missing` is a configured event fluid holds no registration of ours for.
+ * `dead` is one registered with `active: false`: the row exists and delivers
+ * nothing, and repoint preserves the flag, so moving it would verify a url and
+ * report a cutover while that event still reached nobody. The two are reported
+ * separately because the remedies differ — re-register versus re-activate.
+ */
+function completenessProblems(ours: FluidWebhook[]): {
+  missing: string[];
+  dead: string[];
+} {
+  const enabled = dropletConfig.webhooks.filter((w) => w.enabled !== false);
+  const nonBootstrap = ours.filter((w) => !isBootstrap(w));
+  const live = new Set(
+    nonBootstrap
+      .filter((w) => w.active !== false)
+      .map((w) => `${w.resource}.${w.event}`),
+  );
+  const inactive = new Set(
+    nonBootstrap
+      .filter((w) => w.active === false)
+      .map((w) => `${w.resource}.${w.event}`),
+  );
+  const absent = enabled
+    .map((w) => `${w.resource}.${w.event}`)
+    .filter((name) => !live.has(name));
+
+  return {
+    missing: absent.filter((name) => !inactive.has(name)),
+    dead: absent.filter((name) => inactive.has(name)),
+  };
+}
+
+/** The operator-facing text for completenessProblems, shared by both commands. */
+function describeCompleteness(missing: string[], dead: string[]): string {
+  return (
+    (missing.length > 0
+      ? `  fluid holds no registration of ours for: ${missing.join(", ")}.\n` +
+        `  Install-time registration failures are logged and swallowed, so this\n` +
+        `  is a state a live company can genuinely be in. Re-register first.\n\n`
+      : "") +
+    (dead.length > 0
+      ? `  Registered but INACTIVE: ${dead.join(", ")}.\n` +
+        `  Those rows exist and deliver nothing, and repoint preserves the\n` +
+        `  active flag — so moving them would verify their url and report the\n` +
+        `  tenant cut over while the event still reaches nobody. Re-activate\n` +
+        `  them first.\n\n`
+      : "")
+  );
+}
+
 async function loadCompany(handle: string) {
   const company = await prisma.company.findFirst({
     where: {
@@ -287,8 +345,26 @@ async function status(handle: string, args: string[]) {
 
   const ours = webhooks.filter((w) => isOurs(w, origins));
   const blocked = ours.filter((w) => !isBootstrap(w) && !holdsToken);
+  const { missing, dead } = completenessProblems(ours);
 
-  console.log(`\n${ours.length} webhook(s) would be repointed.`);
+  // What repoint WOULD do, not merely what matched.
+  //
+  // This used to print "N webhook(s) would be repointed" from the match count
+  // alone, so a company repoint goes on to refuse — one with order.updated
+  // missing or inactive — was reported as ready to move. status is the command
+  // an operator uses to decide, so it has to give repoint's answer.
+  const wouldRefuse =
+    blocked.length > 0 || missing.length > 0 || dead.length > 0;
+
+  console.log(
+    wouldRefuse
+      ? `\n${ours.length} webhook(s) matched, but repoint would REFUSE this company.`
+      : `\n${ours.length} webhook(s) would be repointed.`,
+  );
+
+  if (missing.length > 0 || dead.length > 0) {
+    console.log("\n" + describeCompleteness(missing, dead).trimEnd());
+  }
 
   if (blocked.length > 0) {
     console.log(
@@ -407,51 +483,16 @@ async function repoint(handle: string, args: string[]) {
   //
   // Install-time registration failures are logged and swallowed
   // (src/lib/handlers/droplet-installed.ts), so a company can be live with
-  // `order.created` registered and `order.updated` never created at all. Moving
-  // the one that exists and reporting success would cut the tenant over in a
-  // state where edits and cancellations reach nothing — the exact silent-gap
-  // shape this tool exists to avoid.
-  const enabled = dropletConfig.webhooks.filter((w) => w.enabled !== false);
-  //
-  // ACTIVE registrations only. An `active: false` row exists but delivers
-  // nothing, and the update below preserves that flag — so counting it as
-  // present would move a dead registration, verify its url, and report the
-  // tenant cut over while that event silently reaches nobody. Inactive is
-  // reported separately from missing, because the remedy differs.
-  const nonBootstrap = ours.filter((w) => !isBootstrap(w));
-  const found = new Set(
-    nonBootstrap
-      .filter((w) => w.active !== false)
-      .map((w) => `${w.resource}.${w.event}`),
-  );
-  const inactive = new Set(
-    nonBootstrap
-      .filter((w) => w.active === false)
-      .map((w) => `${w.resource}.${w.event}`),
-  );
-  const absent = enabled
-    .map((w) => `${w.resource}.${w.event}`)
-    .filter((name) => !found.has(name));
-  if (absent.length > 0) {
-    const dead = absent.filter((name) => inactive.has(name));
-    const missing = absent.filter((name) => !inactive.has(name));
+  // `order.created` registered and `order.updated` never created at all.
+  const { missing, dead } = completenessProblems(ours);
+  if (missing.length > 0 || dead.length > 0) {
     fail(
       `Refusing to repoint ${company.fluidShop}.\n\n` +
-        (missing.length > 0
-          ? `  fluid holds no registration of ours for: ${missing.join(", ")}.\n` +
-            `  Install-time registration failures are logged and swallowed, so this\n` +
-            `  is a state a live company can genuinely be in. Re-register first.\n\n`
-          : "") +
-        (dead.length > 0
-          ? `  Registered but INACTIVE: ${dead.join(", ")}.\n` +
-            `  Those rows exist and deliver nothing, and this tool preserves the\n` +
-            `  active flag — so moving them would verify their url and report the\n` +
-            `  tenant cut over while the event still reaches nobody. Re-activate\n` +
-            `  them first.\n\n`
-          : "") +
+        describeCompleteness(missing, dead) +
         `  Nothing has been changed.`,
     );
   }
+
   const holdsToken = !!company.webhookVerificationToken;
   const blocked = ours.filter((w) => !isBootstrap(w) && !holdsToken);
   if (blocked.length > 0) {
