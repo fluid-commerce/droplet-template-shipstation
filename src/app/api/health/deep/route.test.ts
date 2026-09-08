@@ -15,7 +15,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockPrisma = vi.hoisted(() => ({
-  company: { findFirst: vi.fn(), findMany: vi.fn() },
+  company: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn() },
   integrationSetting: { findUnique: vi.fn() },
 }));
 
@@ -35,12 +35,13 @@ const v1KeyOnly = { apiVersion: "v1", settings: { api_key: "k" } };
 const v2Complete = { apiVersion: "v2", settings: { v2_api_key: "v2k" } };
 
 /**
- * The scoped branch resolves the company twice — once by handle, once the way
- * the order path does — so the default double returns the same row for both.
+ * The scoped branch resolves the company by handle and then counts the rows the
+ * order path could resolve to. The healthy default is exactly one.
  */
 function scopedCompany(row: Record<string, unknown> = {}) {
   const company = { id: 1n, active: true, fluidCompanyId: 42n, ...row };
   mockPrisma.company.findFirst.mockResolvedValue(company);
+  mockPrisma.company.count.mockResolvedValue(1);
   return company;
 }
 
@@ -138,19 +139,28 @@ describe("GET /api/health/deep", () => {
     expect((await response.json()).ok).toBe(true);
   });
 
-  it("fails when fluid_company_id resolves to a different row than the shop does", async () => {
+  it("fails when another company shares the fluid_company_id the order path resolves by", async () => {
     // fluid_company_id is indexed but not unique, and the order path resolves by
-    // it with an unordered findFirst -- so a duplicate would serve this
-    // company's orders from another company's ShipStation credentials.
-    mockPrisma.company.findFirst
-      .mockResolvedValueOnce({ id: 1n, active: true, fluidCompanyId: 42n })
-      .mockResolvedValueOnce({ id: 2n, active: true, fluidCompanyId: 42n });
+    // it with an unordered findFirst -- so a duplicate could serve this
+    // company's orders from another company's ShipStation credentials. Looking
+    // the row up a second time would not detect this: both lookups are
+    // unordered and would return the same row. Only the count settles it.
+    scopedCompany();
+    mockPrisma.company.count.mockResolvedValue(2);
 
     const response = await GET(request("?company=nuvamed.fluid.app"));
 
     expect(response.status).toBe(503);
-    expect((await response.json()).error).toMatch(/different row by fluid_company_id/);
+    expect((await response.json()).error).toMatch(/share fluid_company_id/);
     expect(mockPrisma.integrationSetting.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("fails when the count is zero, rather than reading it as healthy", async () => {
+    scopedCompany();
+    mockPrisma.company.count.mockResolvedValue(0);
+
+    const response = await GET(request("?company=nuvamed.fluid.app"));
+    expect(response.status).toBe(503);
   });
 
   it("asks for the settings row WITHOUT a select, so a drifted column still throws", async () => {

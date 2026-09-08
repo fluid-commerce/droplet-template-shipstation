@@ -125,26 +125,32 @@ export async function GET(request: Request): Promise<Response> {
         return NextResponse.json(result, { status: 503 });
       }
 
-      // Resolve the company a SECOND time, the way the order path resolves it.
+      // Count the rows the order path could resolve to, do not just look one up.
       //
       // A webhook does not carry our primary key; `createShipstationOrder` does
-      // `company.findFirst({ where: { fluidCompanyId } })`, and
-      // `fluid_company_id` carries an index but NOT a unique constraint, and
-      // that findFirst has no ordering. So two rows sharing a fluid_company_id
-      // would let this check pass on the row we resolved by shop while every
-      // real order was served from the other one — reading a different
-      // company's ShipStation credentials, or none. There are no duplicates in
-      // production today (measured 2026-09-08, zero groups), which is precisely
-      // why this is worth asserting: it is cheap to keep true and expensive to
-      // discover has stopped being true, and this check exists to catch the
-      // gaps between "reachable" and "can do the job".
-      const asTheOrderPathResolvesIt = await prisma.company.findFirst({
+      // `company.findFirst({ where: { fluidCompanyId } })`, `fluid_company_id`
+      // carries an index but NOT a unique constraint, and that findFirst has no
+      // ordering. Two rows sharing a fluid_company_id would let a real order be
+      // served from the row we did not check — reading another company's
+      // ShipStation credentials, or none.
+      //
+      // Repeating the findFirst here would NOT establish that. Both calls are
+      // unordered, so both would very likely return the same row, and the check
+      // would report healthy right up until a plan change or a physical row
+      // reorder made the order path pick the other one. The only assertion
+      // worth making is that exactly one row exists. There are no duplicate
+      // groups in production today (measured 2026-09-08), which is why this is
+      // worth holding: cheap to keep true, expensive to discover has stopped
+      // being true.
+      const sharingFluidCompanyId = await prisma.company.count({
         where: { fluidCompanyId: company.fluidCompanyId },
       });
-      if (asTheOrderPathResolvesIt?.id !== company.id) {
+      if (sharingFluidCompanyId !== 1) {
         result.error =
-          `company "${handle}" resolves to a different row by fluid_company_id ` +
-          `than by shop, so orders would be served from another company's settings`;
+          `${sharingFluidCompanyId} companies share fluid_company_id ` +
+          `${company.fluidCompanyId}, which the order path resolves by with an ` +
+          `unordered findFirst, so orders could be served from another ` +
+          `company's settings`;
         return NextResponse.json(result, { status: 503 });
       }
 
