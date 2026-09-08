@@ -554,10 +554,42 @@ async function repoint(handle: string, args: string[]) {
       `Destination accepted a webhook signed with FLUID_WEBHOOK_AUTH_TOKEN (${signed.status}).`,
     );
   } else {
+    // Rails: the WEBHOOK route cannot be probed, but the SERVICE can.
+    //
+    // Skipping every check meant a mistyped but syntactically valid host —
+    // `fluid-droplet-shipstatoin`, say — was accepted, every registration
+    // updated, the read-back confirmed, and the run reported success while
+    // deliveries reached nothing at all. The webhook route stays unprobeable;
+    // the host does not have to be.
+    //
+    // `/up` is Rails's own health endpoint (config/routes.rb:
+    // `get "up" => "rails/health#show"`). It also discriminates: measured
+    // against production it returns 200 on the Rails service and 404 on the
+    // Next one, so it catches a --url pointed at the wrong app as well as at
+    // no app.
+    const healthUrl = `${target}/up`;
+    const health = await fetch(healthUrl, { method: "GET" }).catch(
+      (error: unknown) => {
+        fail(
+          `Could not reach ${healthUrl}: ${
+            error instanceof Error ? error.message : String(error)
+          }\n\n  Check --url. Nothing has been changed.`,
+        );
+      },
+    );
+    if (health.status !== 200) {
+      fail(
+        `${healthUrl} answered ${health.status}; expected 200.\n\n` +
+          `  That is Rails's own health endpoint, so this is either the wrong\n` +
+          `  host or a service that is not up. The Next service answers 404\n` +
+          `  there, so check --url is really the Rails one.\n\n` +
+          `  Nothing has been changed.`,
+      );
+    }
     console.log(
-      `Destination is the Rails path (${path}); skipping the reachability and\n` +
-        `signature checks — Rails answers 404 to any unauthenticated probe, so\n` +
-        `they cannot tell a healthy endpoint from a missing one there.`,
+      `Destination ${target} is up (GET /up -> 200). The webhook route itself\n` +
+        `cannot be probed on Rails — it answers 404 to any unauthenticated\n` +
+        `request, healthy or not — so the signature checks stay disabled here.`,
     );
   }
 
