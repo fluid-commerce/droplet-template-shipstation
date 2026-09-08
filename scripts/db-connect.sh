@@ -86,10 +86,10 @@ if ! kill -0 "$PROXY_PID" 2>/dev/null; then
   exit 1
 fi
 
-if [ "$1" = "--exec" ]; then
+if [ "${1:-}" = "--exec" ]; then
   shift
   # Tolerate the conventional `--` separator so the command reads naturally.
-  [ "$1" = "--" ] && shift
+  [ "${1:-}" = "--" ] && shift
   if [ $# -eq 0 ]; then
     echo "Error: --exec needs a command to run" >&2
     exit 2
@@ -109,7 +109,7 @@ else
   eval "$(DB_URL_FOR_PARSE="$LOCAL_DB_URL" node -e "$SPLIT_DB_URL_JS")"
   export PGPASSWORD PGUSER
 
-  if [ "$1" = "-c" ] && [ -n "$2" ]; then
+  if [ "${1:-}" = "-c" ] && [ -n "${2:-}" ]; then
     psql "$SAFE_URL" -c "$2"
   else
     psql "$SAFE_URL"

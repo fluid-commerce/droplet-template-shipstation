@@ -382,7 +382,12 @@ async function repoint(handle: string, args: string[]) {
   console.log(`Company ${company.fluidShop} (id ${company.id})`);
   console.log(`Repointing ${ours.length} webhook(s) to ${targetUrl}\n`);
 
+  // Every id this run is responsible for, whether it was updated now or was
+  // already there. Both must end up at targetUrl for the run to be a success.
+  const movedIds: string[] = [];
+
   for (const webhook of ours) {
+    movedIds.push(String(webhook.id));
     const already = webhook.url === targetUrl;
     const label = `  ${describe(webhook).padEnd(22)} ${webhook.url} ->`;
 
@@ -442,19 +447,32 @@ async function repoint(handle: string, args: string[]) {
 
   // Read back rather than trust the writes. An update that 200s and does not
   // move the url is the failure this exists to catch.
+  //
+  // Verified by the IDS WE JUST TOUCHED, not by re-running `isOurs` over the
+  // new listing. `isOurs` only recognises the two known paths, so a typo'd
+  // --webhook-path (`/api/webhook`, say) moved every registration to a route
+  // nothing serves and then made them invisible to this check — the straggler
+  // list came back empty and it printed "Verified: every webhook of ours is
+  // now at ...". A verification that stops seeing what it just broke is worse
+  // than no verification, because it is believed.
   const after = await listWebhooks(client);
-  const stragglers = after
-    .filter((w) => isOurs(w, origins))
+  const byId = new Map(after.map((w) => [String(w.id), w]));
+  const stragglers = movedIds
+    .map((id) => byId.get(id) ?? { id, url: "(no longer listed)" })
     .filter((w) => w.url !== targetUrl);
 
   if (stragglers.length > 0) {
     fail(
-      `\n${stragglers.length} webhook(s) are still not at ${targetUrl} after ` +
-        `the update:\n` +
-        stragglers.map((w) => `    ${describe(w)}  ${w.url}`).join("\n"),
+      `\n${stragglers.length} of the ${movedIds.length} webhook(s) updated are ` +
+        `not at ${targetUrl}:\n` +
+        stragglers
+          .map((w) => `    id ${w.id}  ${w.url}`)
+          .join("\n"),
     );
   }
-  console.log(`\nVerified: every webhook of ours is now at ${targetUrl}.`);
+  console.log(
+    `\nVerified: all ${movedIds.length} webhook(s) updated are at ${targetUrl}.`,
+  );
 }
 
 async function main() {
