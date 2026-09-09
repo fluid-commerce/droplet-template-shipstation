@@ -55,6 +55,19 @@ const LONG_MESSAGE = {
   h: { iv: "QzthloY2nj4e5lg1", at: "hQYXY0iM4GkfkH08p+2g9A==", c: true },
 };
 
+/**
+ * Restores an environment variable, including to "unset".
+ *
+ * `process.env.X = undefined` stores the literal string "undefined", so a naive
+ * save/restore leaves a variable that began unset looking configured — and a
+ * later test in the same process then derives a key against the word
+ * "undefined" instead of failing as it should.
+ */
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
 describe("deriveKey", () => {
   it("derives the SHA1 key, for an app still on 6.1 framework defaults", () => {
     expect(deriveKey(DETERMINISTIC_KEY, SALT, "sha1").toString("hex")).toBe(
@@ -90,8 +103,8 @@ describe("the default key path", () => {
     try {
       return run();
     } finally {
-      process.env.ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY = before.k;
-      process.env.ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT = before.s;
+      restoreEnv("ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY", before.k);
+      restoreEnv("ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT", before.s);
     }
   };
 
