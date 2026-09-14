@@ -31,6 +31,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/db";
 import { routeEvent, hasHandler } from "@/lib/events";
+import { unwrapLifecycleEnvelope } from "@/lib/events/lifecycle-envelope";
 import { initializeHandlers } from "@/lib/handlers";
 
 initializeHandlers();
@@ -47,10 +48,28 @@ initializeHandlers();
  */
 const BOOTSTRAP_EVENTS = [INSTALL_EVENT, "droplet.uninstalled"];
 
+/**
+ * The secret Fluid signs `droplet.installed` / `droplet.uninstalled` with.
+ *
+ * When the droplet record has an `install_webhook_url` (this one does), Fluid
+ * delivers lifecycle events through `Droplet::WebhookDispatcher`, which HMACs
+ * the body with the DROPLET'S OWN `webhook_secret`
+ * (`webhook_notifier.rb#lifecycle_webhook_data`, `webhook_dispatcher.rb#request_headers`)
+ * — not with the shared token this app writes onto per-company webhooks. The
+ * Rails app never noticed: it authenticated installs by comparing a body
+ * field, not a signature.
+ *
+ * Falls back to FLUID_WEBHOOK_AUTH_TOKEN so a deployment without the new
+ * variable keeps its current behaviour.
+ */
+const LIFECYCLE_SECRET =
+  process.env.FLUID_DROPLET_WEBHOOK_SECRET || process.env.FLUID_WEBHOOK_AUTH_TOKEN;
+
+
 export const POST = withFluidWebhook(
   {
     name: "droplet",
-    bootstrapSecret: process.env.FLUID_WEBHOOK_AUTH_TOKEN,
+    bootstrapSecret: LIFECYCLE_SECRET,
     bootstrapEvents: BOOTSTRAP_EVENTS,
 
     /**
@@ -100,7 +119,12 @@ export const POST = withFluidWebhook(
       // the body is attacker-controlled, and a payload naming a DIFFERENT
       // company than the one whose secret signed it would otherwise be
       // processed with that other tenant's ShipStation and Fluid credentials.
-      const handled = await routeEvent(event, payload, undefined, principal);
+      const handled = await routeEvent(
+        event,
+        unwrapLifecycleEnvelope(payload),
+        undefined,
+        principal,
+      );
       return new NextResponse(null, { status: handled ? 202 : 204 });
     } catch (error) {
       // The payload is never logged here: it carries authentication_token and
