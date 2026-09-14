@@ -150,6 +150,17 @@ describe("handleDropletInstalled", () => {
     expect(registerCallbacksForCompany).not.toHaveBeenCalled();
   });
 
+  it("refuses Fluid's v2 lifecycle payload with a message naming the contract, and writes nothing", async () => {
+    const { authentication_token: _omitted, ...rest } = installPayload.company;
+    await expect(
+      handleDropletInstalled({
+        company: { ...rest, credentials: { exchange_token: "dxt_1", exchange_endpoint: "/x" } },
+      }),
+    ).rejects.toThrow(/v2 lifecycle contract/);
+    expect(mockPrisma.company.create).not.toHaveBeenCalled();
+    expect(mockPrisma.company.update).not.toHaveBeenCalled();
+  });
+
   it("rejects a payload with no authentication token", async () => {
     const { authentication_token: _omitted, ...rest } = installPayload.company;
     await expect(handleDropletInstalled({ company: rest })).rejects.toThrow();

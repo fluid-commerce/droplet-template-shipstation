@@ -37,6 +37,19 @@ const installCompanySchema = z.object({
 const installPayloadSchema = z.object({ company: installCompanySchema });
 
 export async function handleDropletInstalled(payload: unknown): Promise<void> {
+  // Fluid's v2 lifecycle contract sends `company.credentials.exchange_token`
+  // instead of `authentication_token`. This droplet implements v1 only (droplet
+  // 61's lifecycle_contract_version is "v1"); fail with that fact rather than a
+  // bare schema error if the record is ever switched.
+  const credentials = (payload as { company?: { credentials?: { exchange_token?: unknown } } })
+    ?.company?.credentials;
+  if (credentials?.exchange_token !== undefined) {
+    throw new Error(
+      "droplet.installed uses Fluid's v2 lifecycle contract (exchange_token); " +
+        "this droplet implements v1 only — set the droplet's lifecycle_contract_version to v1",
+    );
+  }
+
   const { company: data } = installPayloadSchema.parse(payload);
 
   // Guard against cross-contamination. Fluid delivers install webhooks per
