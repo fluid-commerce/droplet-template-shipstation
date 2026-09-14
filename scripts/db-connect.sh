@@ -7,9 +7,10 @@
 #   ./scripts/db-connect.sh -c "SELECT ..."       # Run a single query
 #   ./scripts/db-connect.sh --exec -- pnpm cutover status nuvamed.fluid.app
 #
-# --exec also supplies FLUID_WEBHOOK_AUTH_TOKEN from Secret Manager, because
-# cutover signs a preflight webhook with it before writing anything. An
-# already-set value in the environment wins, so a caller can override it.
+# --exec also supplies FLUID_WEBHOOK_AUTH_TOKEN (the auth_token cutover writes
+# onto webhooks), FLUID_DROPLET_WEBHOOK_SECRET (the lifecycle key cutover signs
+# its preflight webhook with) and CRON_SECRET from Secret Manager. An already-set
+# value in the environment wins, so a caller can override any of them.
 #
 # The secret is fetched into a shell variable and never printed, echoed or
 # written to a file. That is the whole point of routing through this script
@@ -103,8 +104,8 @@ if [ "${1:-}" = "--exec" ]; then
   fi
   # The webhook token too, for scripts that need it.
   #
-  # scripts/cutover.ts signs a preflight webhook with FLUID_WEBHOOK_AUTH_TOKEN
-  # before it writes anything, so it cannot run without the real value. Fetching
+  # scripts/cutover.ts sends FLUID_WEBHOOK_AUTH_TOKEN as the auth_token on every
+  # webhook it updates, so it cannot run without the real value. Fetching
   # it here keeps that value on the same footing as the database url: it is read
   # straight into a variable and handed to the child as an environment
   # variable, never printed, never written to a file, never placed in argv.

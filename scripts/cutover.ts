@@ -70,7 +70,8 @@
  *
  * `repoint` therefore refuses to move a NON-BOOTSTRAP webhook for a company
  * whose token we do not hold. Bootstrap webhooks (`droplet.*`) are moved
- * regardless, because those genuinely do verify against the shared secret.
+ * regardless, because those verify against the droplet-level lifecycle key
+ * rather than a company token.
  *
  * ## Why the auth_token is re-sent on update
  *
@@ -80,8 +81,9 @@
  * which is the same value install-time registration sends
  * (src/lib/handlers/droplet-installed.ts). Per the `auth_token` override above
  * this does not change the signing key for any webhook linked to an
- * installation, and for the bootstrap pair the shared secret is exactly the key
- * that must be there.
+ * installation. The Next route never verifies auth_token itself; lifecycle
+ * events are verified with FLUID_DROPLET_WEBHOOK_SECRET (see the signed
+ * preflight in `repoint`).
  *
  * Writes require APPLY=1. `status` never writes.
  */
@@ -123,7 +125,7 @@ const WEBHOOK_PATHS = [NEXT_WEBHOOK_PATH, RAILS_WEBHOOK_PATH];
  * `droplet.updated` subscription would be classified bootstrap, so the
  * token guard below would wave it through for a company we hold no
  * verification token for — and the route would then 401 every delivery,
- * because it accepts the shared secret only for the two events above.
+ * because it accepts the lifecycle key only for the two events above.
  */
 const BOOTSTRAP_EVENTS = new Set(["droplet.installed", "droplet.uninstalled"]);
 const BOOTSTRAP_RESOURCE = "droplet";

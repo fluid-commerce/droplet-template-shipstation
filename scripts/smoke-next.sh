@@ -43,7 +43,9 @@ check () {
   fi
 }
 
-code () { curl -s -o /dev/null -m 20 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
+# curl already prints 000 for -w when it cannot connect; `|| echo 000` would
+# append a second one and make the 000) branches below unreachable.
+code () { curl -s -o /dev/null -m 20 -w '%{http_code}' "$@" 2>/dev/null || true; }
 
 echo "Smoke testing $BASE"
 
