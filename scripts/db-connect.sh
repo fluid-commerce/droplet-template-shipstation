@@ -126,6 +126,9 @@ if [ "${1:-}" = "--exec" ]; then
   # and smoke-next.sh sign with it. Same handling, and not fatal if missing.
   DROPLET_WEBHOOK_SECRET_VALUE=$(gcloud secrets versions access latest \
     --secret="$DROPLET_WEBHOOK_SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null || true)
+  if [ -z "${FLUID_DROPLET_WEBHOOK_SECRET:-}" ] && [ -z "$DROPLET_WEBHOOK_SECRET_VALUE" ]; then
+    echo "Warning: could not read $DROPLET_WEBHOOK_SECRET_NAME; FLUID_DROPLET_WEBHOOK_SECRET is unset" >&2
+  fi
 
   # An env var, not argv. Child processes inherit it; `ps` does not show it.
   DATABASE_URL="$LOCAL_DB_URL" \

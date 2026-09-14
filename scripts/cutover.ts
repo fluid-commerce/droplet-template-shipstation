@@ -423,11 +423,6 @@ async function repoint(handle: string, args: string[]) {
 
   const sharedToken = process.env.FLUID_WEBHOOK_AUTH_TOKEN;
   const authToken = sharedToken;
-  // The route verifies lifecycle events with FLUID_DROPLET_WEBHOOK_SECRET when
-  // it is configured (src/app/api/webhooks/route.ts LIFECYCLE_SECRET), so the
-  // preflight probe signs with the same key. auth_token written onto webhooks
-  // stays the shared token.
-  const lifecycleKey = process.env.FLUID_DROPLET_WEBHOOK_SECRET || sharedToken;
   if (!authToken) {
     fail(
       `FLUID_WEBHOOK_AUTH_TOKEN is not set. The update endpoint validates ` +
@@ -573,14 +568,29 @@ async function repoint(handle: string, args: string[]) {
     }
     console.log(`Destination ${targetUrl} refused an unsigned webhook with 401.`);
 
-    // Second probe, SIGNED with the very token this run is about to write onto
-    // the bootstrap registrations.
+    // Second probe, SIGNED with the lifecycle key Fluid actually uses.
     //
     // The unsigned probe proves the route verifies. It says nothing about
-    // whether OUR token is the one it accepts — so a stale but non-empty
-    // FLUID_WEBHOOK_AUTH_TOKEN passes it, gets written onto
-    // droplet.installed/uninstalled, and every lifecycle delivery 401s
-    // afterwards. Signing the probe with the same value closes that gap.
+    // whether the key Fluid signs droplet.installed / droplet.uninstalled with
+    // is the one it accepts. That key is the droplet record's own
+    // webhook_secret (Droplet::WebhookDispatcher), which the route reads from
+    // FLUID_DROPLET_WEBHOOK_SECRET. It is a DIFFERENT value from the auth_token
+    // this run writes onto webhooks, which the Next route never verifies.
+    //
+    // No fallback to FLUID_WEBHOOK_AUTH_TOKEN, deliberately: the route falls
+    // back to it when its own variable is unset, so a probe signed with it
+    // would pass against a service missing the droplet secret — and every real
+    // lifecycle delivery would then 401.
+    const lifecycleKey = process.env.FLUID_DROPLET_WEBHOOK_SECRET;
+    if (!lifecycleKey) {
+      fail(
+        `FLUID_DROPLET_WEBHOOK_SECRET is not set. It is the droplet record's\n` +
+          `  webhook_secret, the key Fluid signs lifecycle webhooks with, and the\n` +
+          `  signed preflight must use it.\n\n` +
+          `  Run through scripts/db-connect.sh --exec, which supplies it from\n` +
+          `  Secret Manager (SHIPSTATION_FLUID_DROPLET_WEBHOOK_SECRET).`,
+      );
+    }
     //
     // `droplet.uninstalled` with a made-up installation uuid, NOT
     // droplet.installed. Both are bootstrap events so either proves the point,
@@ -594,7 +604,7 @@ async function repoint(handle: string, args: string[]) {
       company: { droplet_installation_uuid: "cutover-preflight-not-a-real-installation" },
     });
     const timestamp = Math.floor(Date.now() / 1000);
-    const signature = createHmac("sha256", lifecycleKey!)
+    const signature = createHmac("sha256", lifecycleKey)
       .update(`${timestamp}.${probeBody}`)
       .digest("hex");
 
@@ -622,19 +632,17 @@ async function repoint(handle: string, args: string[]) {
       fail(
         `Signed preflight to ${targetUrl} answered ${signed.status}.\n\n` +
           (signed.status === 401
-            ? `  401 means the destination does not accept this lifecycle key\n` +
-              `  (FLUID_DROPLET_WEBHOOK_SECRET, or FLUID_WEBHOOK_AUTH_TOKEN when unset).\n` +
-              `  Writing it onto the droplet.installed / droplet.uninstalled\n` +
-              `  registrations would make every lifecycle delivery fail. Check the\n` +
-              `  token against the destination service's own secret.`
+            ? `  401 means the destination does not accept FLUID_DROPLET_WEBHOOK_SECRET.\n` +
+              `  Fluid signs every droplet.installed / droplet.uninstalled with that\n` +
+              `  key, so installs and uninstalls would fail. Check the service's\n` +
+              `  FLUID_DROPLET_WEBHOOK_SECRET mapping against the same Secret Manager\n` +
+              `  entry, and that it is on the serving revision.`
             : `  Expected 202 or 204. The route is reachable and verifying, but did\n` +
               `  not complete this request — investigate before repointing.`),
       );
     }
     console.log(
-      `Destination accepted a lifecycle webhook signed with ${
-        process.env.FLUID_DROPLET_WEBHOOK_SECRET ? "FLUID_DROPLET_WEBHOOK_SECRET" : "FLUID_WEBHOOK_AUTH_TOKEN"
-      } (${signed.status}).`,
+      `Destination accepted a lifecycle webhook signed with FLUID_DROPLET_WEBHOOK_SECRET (${signed.status}).`,
     );
 
     // Third probe: can the destination actually DO the work?

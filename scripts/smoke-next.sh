@@ -180,7 +180,12 @@ if [ -n "${FLUID_DROPLET_WEBHOOK_SECRET:-}" ]; then
       fail=$((fail + 1)) ;;
   esac
 
-  if [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
+  # Only meaningful once the positive probe got through: against an unreachable
+  # or broken service the negative probe would fail too and blame the fallback.
+  if ! case "$SIGNED" in 200|202|204) true ;; *) false ;; esac; then
+    printf '  SKIP  %-52s %s\n' "shared token refused for lifecycle events" \
+      "positive probe did not pass"
+  elif [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
     NEGATIVE=$(signed_lifecycle_status "$FLUID_WEBHOOK_AUTH_TOKEN")
     if [ "$NEGATIVE" = "401" ]; then
       printf '  ok    %-52s %s\n' "shared token refused for lifecycle events" "$NEGATIVE"
