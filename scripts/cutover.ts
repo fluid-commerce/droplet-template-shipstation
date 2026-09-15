@@ -70,7 +70,8 @@
  *
  * `repoint` therefore refuses to move a NON-BOOTSTRAP webhook for a company
  * whose token we do not hold. Bootstrap webhooks (`droplet.*`) are moved
- * regardless, because those genuinely do verify against the shared secret.
+ * regardless, because those verify against the droplet-level lifecycle key
+ * rather than a company token.
  *
  * ## Why the auth_token is re-sent on update
  *
@@ -80,8 +81,9 @@
  * which is the same value install-time registration sends
  * (src/lib/handlers/droplet-installed.ts). Per the `auth_token` override above
  * this does not change the signing key for any webhook linked to an
- * installation, and for the bootstrap pair the shared secret is exactly the key
- * that must be there.
+ * installation. The Next route never verifies auth_token itself; lifecycle
+ * events are verified with FLUID_DROPLET_WEBHOOK_SECRET (see the signed
+ * preflight in `repoint`).
  *
  * Writes require APPLY=1. `status` never writes.
  */
@@ -113,8 +115,8 @@ const RAILS_WEBHOOK_PATH = "/webhook";
 const WEBHOOK_PATHS = [NEXT_WEBHOOK_PATH, RAILS_WEBHOOK_PATH];
 
 /**
- * The events fluid signs with the SHARED secret rather than a company's own
- * token — the EXACT pairs, not the resource.
+ * The lifecycle events fluid signs with the droplet-level secret rather than a
+ * company's own token — the EXACT pairs, not the resource.
  *
  * Kept identical to BOOTSTRAP_EVENTS in src/app/api/webhooks/route.ts, which
  * lists `droplet.installed` and `droplet.uninstalled` and nothing else.
@@ -123,7 +125,7 @@ const WEBHOOK_PATHS = [NEXT_WEBHOOK_PATH, RAILS_WEBHOOK_PATH];
  * `droplet.updated` subscription would be classified bootstrap, so the
  * token guard below would wave it through for a company we hold no
  * verification token for — and the route would then 401 every delivery,
- * because it accepts the shared secret only for the two events above.
+ * because it accepts the lifecycle key only for the two events above.
  */
 const BOOTSTRAP_EVENTS = new Set(["droplet.installed", "droplet.uninstalled"]);
 const BOOTSTRAP_RESOURCE = "droplet";
@@ -568,14 +570,29 @@ async function repoint(handle: string, args: string[]) {
     }
     console.log(`Destination ${targetUrl} refused an unsigned webhook with 401.`);
 
-    // Second probe, SIGNED with the very token this run is about to write onto
-    // the bootstrap registrations.
+    // Second probe, SIGNED with the lifecycle key Fluid actually uses.
     //
     // The unsigned probe proves the route verifies. It says nothing about
-    // whether OUR token is the one it accepts — so a stale but non-empty
-    // FLUID_WEBHOOK_AUTH_TOKEN passes it, gets written onto
-    // droplet.installed/uninstalled, and every lifecycle delivery 401s
-    // afterwards. Signing the probe with the same value closes that gap.
+    // whether the key Fluid signs droplet.installed / droplet.uninstalled with
+    // is the one it accepts. That key is the droplet record's own
+    // webhook_secret (Droplet::WebhookDispatcher), which the route reads from
+    // FLUID_DROPLET_WEBHOOK_SECRET. It is a DIFFERENT value from the auth_token
+    // this run writes onto webhooks, which the Next route never verifies.
+    //
+    // No fallback to FLUID_WEBHOOK_AUTH_TOKEN, deliberately: the route falls
+    // back to it when its own variable is unset, so a probe signed with it
+    // would pass against a service missing the droplet secret — and every real
+    // lifecycle delivery would then 401.
+    const lifecycleKey = process.env.FLUID_DROPLET_WEBHOOK_SECRET;
+    if (!lifecycleKey) {
+      fail(
+        `FLUID_DROPLET_WEBHOOK_SECRET is not set. It is the droplet record's\n` +
+          `  webhook_secret, the key Fluid signs lifecycle webhooks with, and the\n` +
+          `  signed preflight must use it.\n\n` +
+          `  Run through scripts/db-connect.sh --exec, which supplies it from\n` +
+          `  Secret Manager (SHIPSTATION_FLUID_DROPLET_WEBHOOK_SECRET).`,
+      );
+    }
     //
     // `droplet.uninstalled` with a made-up installation uuid, NOT
     // droplet.installed. Both are bootstrap events so either proves the point,
@@ -589,7 +606,7 @@ async function repoint(handle: string, args: string[]) {
       company: { droplet_installation_uuid: "cutover-preflight-not-a-real-installation" },
     });
     const timestamp = Math.floor(Date.now() / 1000);
-    const signature = createHmac("sha256", authToken)
+    const signature = createHmac("sha256", lifecycleKey)
       .update(`${timestamp}.${probeBody}`)
       .digest("hex");
 
@@ -617,16 +634,17 @@ async function repoint(handle: string, args: string[]) {
       fail(
         `Signed preflight to ${targetUrl} answered ${signed.status}.\n\n` +
           (signed.status === 401
-            ? `  401 means the destination does not accept FLUID_WEBHOOK_AUTH_TOKEN.\n` +
-              `  Writing it onto the droplet.installed / droplet.uninstalled\n` +
-              `  registrations would make every lifecycle delivery fail. Check the\n` +
-              `  token against the destination service's own secret.`
+            ? `  401 means the destination does not accept FLUID_DROPLET_WEBHOOK_SECRET.\n` +
+              `  Fluid signs every droplet.installed / droplet.uninstalled with that\n` +
+              `  key, so installs and uninstalls would fail. Check the service's\n` +
+              `  FLUID_DROPLET_WEBHOOK_SECRET mapping against the same Secret Manager\n` +
+              `  entry, and that it is on the serving revision.`
             : `  Expected 202 or 204. The route is reachable and verifying, but did\n` +
               `  not complete this request — investigate before repointing.`),
       );
     }
     console.log(
-      `Destination accepted a webhook signed with FLUID_WEBHOOK_AUTH_TOKEN (${signed.status}).`,
+      `Destination accepted a lifecycle webhook signed with FLUID_DROPLET_WEBHOOK_SECRET (${signed.status}).`,
     );
 
     // Third probe: can the destination actually DO the work?

@@ -185,6 +185,41 @@ describe("POST /api/webhooks", () => {
     expect(response.status).toBe(500);
   });
 
+  it("unwraps Fluid's lifecycle envelope and hands the install handler the company", async () => {
+    // Droplet::WebhookDispatcher wraps lifecycle events:
+    // { id, identifier, name, payload: { company, resource, event, ... }, timestamp }
+    const enveloped = {
+      id: 991,
+      identifier: null,
+      name: "droplet_installed",
+      payload: { ...installBody, event_name: "droplet_installed", contract_version: "v1" },
+      timestamp: "2026-09-14T20:00:00Z",
+    };
+
+    const response = await POST(signedWebhookRequest({ secret: BOOTSTRAP, body: enveloped }));
+
+    expect(response.status).toBe(202);
+    expect(handleInstalled).toHaveBeenCalledOnce();
+    expect((handleInstalled.mock.calls as unknown[][])[0]![0]).toEqual(enveloped.payload);
+  });
+
+  it("unwraps an enveloped droplet.uninstalled too", async () => {
+    const enveloped = {
+      id: 992,
+      name: "droplet_uninstalled",
+      payload: {
+        resource: "droplet",
+        event: "uninstalled",
+        company: { droplet_installation_uuid: "dri_acme", fluid_company_id: 42 },
+      },
+    };
+
+    const response = await POST(signedWebhookRequest({ secret: BOOTSTRAP, body: enveloped }));
+
+    expect(response.status).toBe(202);
+    expect((handleUninstalled.mock.calls as unknown[][])[0]![0]).toEqual(enveloped.payload);
+  });
+
   it("refuses a replayed signature that is older than the freshness window", async () => {
     const response = await POST(
       signedWebhookRequest({

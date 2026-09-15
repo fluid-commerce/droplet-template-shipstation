@@ -16,8 +16,8 @@
  *    droplet uuid. That is a value the caller supplies, so anyone who knew the
  *    droplet's uuid — which Fluid publishes in the marketplace — could forge an
  *    install and hand this droplet a `companies` row with credentials of their
- *    choosing. Here the same events are verified by HMAC against the shared
- *    bootstrap secret, and the uuid check remains as a routing guard inside the
+ *    choosing. Here the same events are verified by HMAC against the droplet's
+ *    lifecycle secret (LIFECYCLE_SECRET below), and the uuid check remains as a routing guard inside the
  *    handler rather than as the authentication.
  *  - Every other event was authenticated by a plaintext `AUTH_TOKEN` header
  *    compared with `include?` — not timing-safe, and satisfied by the SHARED
@@ -31,26 +31,56 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/db";
 import { routeEvent, hasHandler } from "@/lib/events";
+import { unwrapLifecycleEnvelope } from "@/lib/events/lifecycle-envelope";
 import { initializeHandlers } from "@/lib/handlers";
 
 initializeHandlers();
 
 /**
- * Events allowed to authenticate with the shared bootstrap secret.
+ * Events allowed to authenticate with the lifecycle secret rather than a
+ * company's own token.
  *
  * `droplet.installed` has to be here: it is the event that delivers the
  * company's own token, so no per-company secret exists yet.
  *
- * `droplet.uninstalled` is here too, because Fluid signs it with the same
- * droplet-level webhook this app registers (WebhookManager creates both with
- * `auth_token: fluid_webhook.auth_token`), not with the company's token.
+ * `droplet.uninstalled` is here too: Fluid signs both lifecycle events with
+ * the same droplet-level secret, not with the company's token.
  */
 const BOOTSTRAP_EVENTS = [INSTALL_EVENT, "droplet.uninstalled"];
+
+/**
+ * The secret Fluid signs `droplet.installed` / `droplet.uninstalled` with.
+ *
+ * When the droplet record has an `install_webhook_url` (this one does), Fluid
+ * delivers lifecycle events through `Droplet::WebhookDispatcher`, which HMACs
+ * the body with the DROPLET'S OWN `webhook_secret`
+ * (`webhook_notifier.rb#lifecycle_webhook_data`, `webhook_dispatcher.rb#request_headers`)
+ * — not with the shared token this app writes onto per-company webhooks. The
+ * Rails app never noticed: it authenticated installs by comparing a body
+ * field, not a signature.
+ *
+ * Falls back to FLUID_WEBHOOK_AUTH_TOKEN so a deployment without the new
+ * variable keeps its current behaviour.
+ */
+const LIFECYCLE_SECRET =
+  process.env.FLUID_DROPLET_WEBHOOK_SECRET || process.env.FLUID_WEBHOOK_AUTH_TOKEN;
+
+// Once the droplet record's lifecycle URLs point here, the fallback is never
+// the key Fluid signs with, so a missing variable means every install and
+// uninstall 401s. Say so once at startup, where Cloud Logging will show it.
+if (!process.env.FLUID_DROPLET_WEBHOOK_SECRET) {
+  console.warn(
+    "[Webhook] FLUID_DROPLET_WEBHOOK_SECRET is not set; droplet.installed / " +
+      "droplet.uninstalled are verified with FLUID_WEBHOOK_AUTH_TOKEN, which is " +
+      "not what Fluid signs lifecycle deliveries with when install_webhook_url is set",
+  );
+}
+
 
 export const POST = withFluidWebhook(
   {
     name: "droplet",
-    bootstrapSecret: process.env.FLUID_WEBHOOK_AUTH_TOKEN,
+    bootstrapSecret: LIFECYCLE_SECRET,
     bootstrapEvents: BOOTSTRAP_EVENTS,
 
     /**
@@ -100,7 +130,12 @@ export const POST = withFluidWebhook(
       // the body is attacker-controlled, and a payload naming a DIFFERENT
       // company than the one whose secret signed it would otherwise be
       // processed with that other tenant's ShipStation and Fluid credentials.
-      const handled = await routeEvent(event, payload, undefined, principal);
+      const handled = await routeEvent(
+        event,
+        unwrapLifecycleEnvelope(payload),
+        undefined,
+        principal,
+      );
       return new NextResponse(null, { status: handled ? 202 : 204 });
     } catch (error) {
       // The payload is never logged here: it carries authentication_token and

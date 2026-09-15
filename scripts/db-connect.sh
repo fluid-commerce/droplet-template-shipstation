@@ -7,9 +7,10 @@
 #   ./scripts/db-connect.sh -c "SELECT ..."       # Run a single query
 #   ./scripts/db-connect.sh --exec -- pnpm cutover status nuvamed.fluid.app
 #
-# --exec also supplies FLUID_WEBHOOK_AUTH_TOKEN from Secret Manager, because
-# cutover signs a preflight webhook with it before writing anything. An
-# already-set value in the environment wins, so a caller can override it.
+# --exec also supplies FLUID_WEBHOOK_AUTH_TOKEN (the auth_token cutover writes
+# onto webhooks), FLUID_DROPLET_WEBHOOK_SECRET (the lifecycle key cutover signs
+# its preflight webhook with) and CRON_SECRET from Secret Manager. An already-set
+# value in the environment wins, so a caller can override any of them.
 #
 # The secret is fetched into a shell variable and never printed, echoed or
 # written to a file. That is the whole point of routing through this script
@@ -28,6 +29,7 @@ GCP_PROJECT="fluid-417204"
 INSTANCE_CONNECTION="fluid-417204:europe-west1:fluid-studioz"
 SECRET_NAME="SHIPSTATION_DATABASE_URL"
 WEBHOOK_TOKEN_SECRET="SHIPSTATION_FLUID_WEBHOOK_AUTH_TOKEN"
+DROPLET_WEBHOOK_SECRET_NAME="SHIPSTATION_FLUID_DROPLET_WEBHOOK_SECRET"
 CRON_SECRET_NAME="SHIPSTATION_CRON_SECRET"
 PROXY_PORT=9482
 
@@ -102,8 +104,8 @@ if [ "${1:-}" = "--exec" ]; then
   fi
   # The webhook token too, for scripts that need it.
   #
-  # scripts/cutover.ts signs a preflight webhook with FLUID_WEBHOOK_AUTH_TOKEN
-  # before it writes anything, so it cannot run without the real value. Fetching
+  # scripts/cutover.ts sends FLUID_WEBHOOK_AUTH_TOKEN as the auth_token on every
+  # webhook it updates, so it cannot run without the real value. Fetching
   # it here keeps that value on the same footing as the database url: it is read
   # straight into a variable and handed to the child as an environment
   # variable, never printed, never written to a file, never placed in argv.
@@ -120,10 +122,20 @@ if [ "${1:-}" = "--exec" ]; then
   CRON_SECRET_VALUE=$(gcloud secrets versions access latest \
     --secret="$CRON_SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null || true)
 
+  # The droplet record's webhook_secret: the key lifecycle events are verified
+  # with once the service sets FLUID_DROPLET_WEBHOOK_SECRET. cutover's preflight
+  # and smoke-next.sh sign with it. Same handling, and not fatal if missing.
+  DROPLET_WEBHOOK_SECRET_VALUE=$(gcloud secrets versions access latest \
+    --secret="$DROPLET_WEBHOOK_SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null || true)
+  if [ -z "${FLUID_DROPLET_WEBHOOK_SECRET:-}" ] && [ -z "$DROPLET_WEBHOOK_SECRET_VALUE" ]; then
+    echo "Warning: could not read $DROPLET_WEBHOOK_SECRET_NAME; FLUID_DROPLET_WEBHOOK_SECRET is unset" >&2
+  fi
+
   # An env var, not argv. Child processes inherit it; `ps` does not show it.
   DATABASE_URL="$LOCAL_DB_URL" \
   FLUID_WEBHOOK_AUTH_TOKEN="${FLUID_WEBHOOK_AUTH_TOKEN:-$WEBHOOK_TOKEN}" \
   CRON_SECRET="${CRON_SECRET:-$CRON_SECRET_VALUE}" \
+  FLUID_DROPLET_WEBHOOK_SECRET="${FLUID_DROPLET_WEBHOOK_SECRET:-$DROPLET_WEBHOOK_SECRET_VALUE}" \
     "$@"
 else
   # Split the password out of the url before psql sees it.

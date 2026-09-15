@@ -23,7 +23,7 @@
 # WHAT THIS STILL CANNOT SHOW
 #
 # It proves the service REFUSES what it should. It cannot prove it ACCEPTS what
-# it should. Deploy with FLUID_WEBHOOK_AUTH_TOKEN absent or wrong and every
+# it should. Deploy with FLUID_DROPLET_WEBHOOK_SECRET absent or wrong and every
 # check below still passes, while every genuine Fluid delivery is also refused.
 # The optional signed check at the bottom is the only part that closes that gap.
 set -uo pipefail
@@ -43,7 +43,9 @@ check () {
   fi
 }
 
-code () { curl -s -o /dev/null -m 20 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
+# curl already prints 000 for -w when it cannot connect; `|| echo 000` would
+# append a second one and make the 000) branches below unreachable.
+code () { curl -s -o /dev/null -m 20 -w '%{http_code}' "$@" 2>/dev/null || true; }
 
 echo "Smoke testing $BASE"
 
@@ -105,42 +107,53 @@ check "no callback route is exposed" 404 \
 
 # Closes the acceptance gap, if the secret is available.
 #
-#   FLUID_WEBHOOK_AUTH_TOKEN=... scripts/smoke-next.sh https://...
+#   FLUID_DROPLET_WEBHOOK_SECRET=... scripts/smoke-next.sh https://...
 #
-# 401 means verification is rejecting real Fluid traffic. Anything else — 200,
-# 202, even a 500 from the handler — proves the signature was accepted, which is
-# the only thing this check is about.
+# Lifecycle events are signed with the droplet record's own webhook_secret
+# (see LIFECYCLE_SECRET in src/app/api/webhooks/route.ts), so ONLY that key is
+# used for the positive probe. The route falls back to FLUID_WEBHOOK_AUTH_TOKEN
+# when the variable is unset, so probing with the fallback would pass against a
+# service that is missing the droplet secret — the one misconfiguration this
+# check exists to catch.
 #
-# `droplet.uninstalled`, NOT `droplet.installed`. Both are bootstrap events, so
+# When FLUID_WEBHOOK_AUTH_TOKEN is also available, a NEGATIVE probe signed with
+# it must be refused: that is what proves the service holds the droplet secret
+# rather than running on the fallback.
+#
+# `droplet.uninstalled`, NOT `droplet.installed`. Both are lifecycle events, so
 # either proves the point, but the install handler WRITES: it creates a
 # companies row from the probe payload. The uninstall handler resolves the
 # company first and returns when it finds none, so a made-up
 # droplet_installation_uuid cannot touch any row. This must stay safe to point
 # at production.
-if [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
-  BODY='{"resource":"droplet","event":"uninstalled","company":{"droplet_installation_uuid":"smoke-not-a-real-installation"}}'
-  TS=$(date +%s)
-  # node, not `openssl -hmac "$TOKEN"`.
-  #
-  # openssl takes the key as a COMMAND LINE argument, so for the life of that
-  # process any local user's `ps` shows the shared webhook secret in full — and
-  # that secret is enough to forge a lifecycle webhook, which is the one thing
-  # this droplet authenticates installs with. node reads it from the
-  # environment instead, where argv cannot leak it.
-  SIG=$(SMOKE_TS="$TS" SMOKE_BODY="$BODY" node -e '
+LIFECYCLE_BODY='{"resource":"droplet","event":"uninstalled","company":{"droplet_installation_uuid":"smoke-not-a-real-installation"}}'
+
+# Signs LIFECYCLE_BODY with the key in $1 and prints the HTTP status.
+#
+# node, not `openssl -hmac "$KEY"`: openssl takes the key as a COMMAND LINE
+# argument, so for the life of that process any local user's `ps` shows the
+# secret in full. node reads it from the environment, where argv cannot leak it.
+signed_lifecycle_status() {
+  local ts sig
+  ts=$(date +%s)
+  sig=$(SMOKE_KEY="$1" SMOKE_TS="$ts" SMOKE_BODY="$LIFECYCLE_BODY" node -e '
     const crypto = require("node:crypto");
     process.stdout.write(
       crypto
-        .createHmac("sha256", process.env.FLUID_WEBHOOK_AUTH_TOKEN)
+        .createHmac("sha256", process.env.SMOKE_KEY)
         .update(`${process.env.SMOKE_TS}.${process.env.SMOKE_BODY}`)
         .digest("hex"),
     );
   ')
-  SIGNED=$(code -X POST "$BASE/api/webhooks" \
+  code -X POST "$BASE/api/webhooks" \
     -H 'content-type: application/json' \
-    -H "X-Fluid-Timestamp: $TS" \
-    -H "X-Fluid-Signature: $SIG" \
-    -d "$BODY")
+    -H "X-Fluid-Timestamp: $ts" \
+    -H "X-Fluid-Signature: $sig" \
+    -d "$LIFECYCLE_BODY"
+}
+
+if [ -n "${FLUID_DROPLET_WEBHOOK_SECRET:-}" ]; then
+  SIGNED=$(signed_lifecycle_status "$FLUID_DROPLET_WEBHOOK_SECRET")
   # An explicit allow-list, not "anything but 401".
   #
   # `code()` returns 000 when curl cannot reach the host at all, and a 500 is a
@@ -154,23 +167,42 @@ if [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
   # the signature verified.
   case "$SIGNED" in
     200|202|204)
-      printf '  ok    %-52s %s\n' "signed lifecycle webhook is accepted" "$SIGNED" ;;
+      printf '  ok    %-52s %s\n' "lifecycle webhook signed with droplet secret" "$SIGNED" ;;
     401)
-      printf '  FAIL  %-52s %s\n' "signed lifecycle webhook is accepted" \
-        "$SIGNED — the token is not the one this service accepts"
+      printf '  FAIL  %-52s %s\n' "lifecycle webhook signed with droplet secret" \
+        "$SIGNED — the service does not accept FLUID_DROPLET_WEBHOOK_SECRET"
       fail=$((fail + 1)) ;;
     000)
-      printf '  FAIL  %-52s %s\n' "signed lifecycle webhook is accepted" \
+      printf '  FAIL  %-52s %s\n' "lifecycle webhook signed with droplet secret" \
         "no response — could not reach the service"
       fail=$((fail + 1)) ;;
     *)
-      printf '  FAIL  %-52s %s\n' "signed lifecycle webhook is accepted" \
+      printf '  FAIL  %-52s %s\n' "lifecycle webhook signed with droplet secret" \
         "$SIGNED — expected 202 or 204"
       fail=$((fail + 1)) ;;
   esac
+
+  # Only meaningful once the positive probe got through: against an unreachable
+  # or broken service the negative probe would fail too and blame the fallback.
+  if ! case "$SIGNED" in 200|202|204) true ;; *) false ;; esac; then
+    printf '  SKIP  %-52s %s\n' "shared token refused for lifecycle events" \
+      "positive probe did not pass"
+  elif [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
+    NEGATIVE=$(signed_lifecycle_status "$FLUID_WEBHOOK_AUTH_TOKEN")
+    if [ "$NEGATIVE" = "401" ]; then
+      printf '  ok    %-52s %s\n' "shared token refused for lifecycle events" "$NEGATIVE"
+    else
+      printf '  FAIL  %-52s %s\n' "shared token refused for lifecycle events" \
+        "$NEGATIVE — expected 401; the service is likely on the FLUID_WEBHOOK_AUTH_TOKEN fallback"
+      fail=$((fail + 1))
+    fi
+  else
+    printf '  SKIP  %-52s %s\n' "shared token refused for lifecycle events" \
+      "set FLUID_WEBHOOK_AUTH_TOKEN to check"
+  fi
 else
-  printf '  SKIP  %-52s %s\n' "signed lifecycle webhook is accepted" \
-    "set FLUID_WEBHOOK_AUTH_TOKEN to check"
+  printf '  SKIP  %-52s %s\n' "lifecycle webhook signed with droplet secret" \
+    "set FLUID_DROPLET_WEBHOOK_SECRET to check"
 fi
 
 echo
@@ -178,15 +210,16 @@ if [ "$fail" -gt 0 ]; then
   echo "$fail check(s) failed — do not repoint any installation at this service."
   exit 1
 fi
-if [ -n "${FLUID_WEBHOOK_AUTH_TOKEN:-}" ]; then
-  echo "Passed. The service refuses unsigned webhooks AND accepts a signed one."
+if [ -n "${FLUID_DROPLET_WEBHOOK_SECRET:-}" ]; then
+  echo "Passed. The service refuses unsigned webhooks AND accepts a lifecycle"
+  echo "webhook signed with the droplet secret."
 else
   echo "Passed, but only the refusal half was checked — nothing here proves a"
   echo "genuine signed webhook would be accepted. Re-run with"
-  echo "FLUID_WEBHOOK_AUTH_TOKEN set before repointing anything."
+  echo "FLUID_DROPLET_WEBHOOK_SECRET set before repointing anything."
 fi
 echo
-echo "A signed BOOTSTRAP event says nothing about order.created/order.updated:"
+echo "A signed LIFECYCLE event says nothing about order.created/order.updated:"
 echo "those verify against the company's own webhook_verification_token, per"
 echo "company. Run 'pnpm cutover status <fluid_shop>' for that — it is the check"
 echo "that predicts whether a repointed company's orders keep flowing."
