@@ -2,7 +2,7 @@
 
 SERVICE=fluid-droplet-shipstation
 SERVICE_JOBS_MIGRATIONS=fluid-droplet-shipstation-migrations
-IMAGE_URL=europe-west1-docker.pkg.dev/fluid-417204/fluid-droplets/fluid-droplet-shipstation-rails/web:latest
+IMAGE_URL=us-south1-docker.pkg.dev/fluid-417204/fluid-droplets/fluid-droplet-shipstation-rails/web:latest
 
 # Variables array - add your variables here
 VARS=(

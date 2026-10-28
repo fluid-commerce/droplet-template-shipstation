@@ -6,7 +6,7 @@ region = "europe-west1"
 service_account_email = "106074092699-compute@developer.gserviceaccount.com"
 
 # container image
-container_image = "europe-west1-docker.pkg.dev/fluid-417204/fluid-droplets/fluid-droplet-shipstation-rails/web:latest"
+container_image = "us-south1-docker.pkg.dev/fluid-417204/fluid-droplets/fluid-droplet-shipstation-rails/web:latest"
 
 # environment variables
 environment_variables = {
