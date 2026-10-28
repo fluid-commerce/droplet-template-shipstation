@@ -1,5 +1,5 @@
 # google cloud build
-# gcloud beta builds submit --config cloudbuild-base.yml --region=europe-west1 --substitutions=COMMIT_SHA=$(git rev-parse --short HEAD) --project=fluid-417204 .
+# gcloud beta builds submit --config cloudbuild-base.yml --region=us-south1 --substitutions=COMMIT_SHA=$(git rev-parse --short HEAD) --project=fluid-417204 .
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
@@ -7,7 +7,7 @@ steps:
         "build",
         "--no-cache",
         "-t",
-        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
+        "us-south1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
         ".",
         "-f",
         "docker/Dockerfile.base",
@@ -18,7 +18,7 @@ steps:
     args:
       [
         "push",
-        "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
+        "us-south1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base",
       ]
     id: push base
 
@@ -27,7 +27,7 @@ substitutions:
   _APP_REPOSITORY: "fluid-droplets"
 
 images:
-  - "europe-west1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base"
+  - "us-south1-docker.pkg.dev/${PROJECT_ID}/${_APP_REPOSITORY}/${_APP_NAME}-rails/web:base"
 
 options:
   substitutionOption: ALLOW_LOOSE
